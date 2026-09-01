@@ -7,9 +7,7 @@ export default function Home() {
   const [status, setStatus] = useState({ state: "loading" });
 
   useEffect(() => {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL;
-
-    fetch(apiUrl)
+    fetch("/api")
       .then((res) => {
         if (!res.ok) throw new Error(`Request failed with status ${res.status}`);
         return res.json();

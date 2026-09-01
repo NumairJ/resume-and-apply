@@ -4,11 +4,26 @@ Basic full-stack scaffold:
 - `frontend/` → Next.js app (runs on http://localhost:3000)
 - `backend/` → FastAPI app (runs on http://localhost:8000)
 
-Run both servers at the same time — the frontend fetches the backend's status
-on page load and displays it, using the `NEXT_PUBLIC_API_URL` env var
-(see `frontend/.env.example`) to know where the backend lives.
+The frontend proxies API calls to the backend via Next.js rewrites
+(`frontend/next.config.mjs`): any request to `/api/*` on the frontend is
+forwarded server-side to the backend, so the browser only ever talks to
+`localhost:3000` and no CORS setup is needed. The backend URL used for this
+proxying is controlled by the `BACKEND_INTERNAL_URL` env var
+(see `frontend/.env.example`).
 
-## Run backend
+## Run with Docker (recommended)
+
+```bash
+docker compose up --build
+```
+
+This builds and starts both services with hot reload — source changes on
+your machine are picked up automatically. Then open http://localhost:3000 —
+it should show "Backend is running".
+
+## Run without Docker
+
+### Backend
 ```bash
 cd backend
 python -m venv .venv
@@ -17,7 +32,7 @@ pip install -r requirements.txt
 uvicorn main:app --reload
 ```
 
-## Run frontend
+### Frontend
 ```bash
 cd frontend
 cp .env.example .env.local  # only needed once
