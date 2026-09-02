@@ -35,7 +35,6 @@ uvicorn main:app --reload
 ### Frontend
 ```bash
 cd frontend
-cp .env.example .env.local  # only needed once
 npm install
 npm run dev
 ```
