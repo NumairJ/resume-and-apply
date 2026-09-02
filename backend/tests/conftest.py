@@ -1,0 +1,93 @@
+import uuid
+from collections.abc import Iterator
+
+import pytest
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine, make_url
+from sqlalchemy.orm import Session, sessionmaker
+
+from core.config import settings
+from core.deps import DEFAULT_USER_ID
+from models.base import Base
+from models.profile import User
+
+
+def _test_database_url() -> str:
+    """The configured database with `_test` appended to its name.
+
+    A separate database rather than the dev one: schema is created and dropped
+    wholesale here, which would be destructive against real data.
+    """
+    url = make_url(settings.database_url)
+    return url.set(database=f"{url.database}_test").render_as_string(
+        hide_password=False
+    )
+
+
+@pytest.fixture(scope="session")
+def engine() -> Iterator[Engine]:
+    url = make_url(_test_database_url())
+
+    # CREATE DATABASE cannot run inside a transaction, hence AUTOCOMMIT, and it has to
+    # be issued from a different database — "postgres" always exists.
+    admin_url = url.set(database="postgres")
+    admin = create_engine(admin_url, isolation_level="AUTOCOMMIT")
+    with admin.connect() as conn:
+        exists = conn.execute(
+            text("SELECT 1 FROM pg_database WHERE datname = :name"),
+            {"name": url.database},
+        ).scalar()
+        if not exists:
+            conn.execute(text(f'CREATE DATABASE "{url.database}"'))
+    admin.dispose()
+
+    test_engine = create_engine(url)
+    Base.metadata.create_all(test_engine)
+    yield test_engine
+    Base.metadata.drop_all(test_engine)
+    test_engine.dispose()
+
+
+@pytest.fixture
+def session(engine: Engine) -> Iterator[Session]:
+    """A session whose work is rolled back when the test ends.
+
+    The session is bound to an already-open transaction, so repository `flush()`
+    calls make data visible to the test without ever committing. Tests are therefore
+    fully isolated and leave no rows behind.
+    """
+    connection = engine.connect()
+    transaction = connection.begin()
+    factory = sessionmaker(bind=connection, autoflush=False, expire_on_commit=False)
+    db = factory()
+    try:
+        yield db
+    finally:
+        db.close()
+        transaction.rollback()
+        connection.close()
+
+
+@pytest.fixture
+def user(session: Session) -> User:
+    """The single seeded user, as the initial migration would have created it."""
+    existing = session.get(User, DEFAULT_USER_ID)
+    if existing:
+        return existing
+    user = User(
+        id=DEFAULT_USER_ID, full_name="Test User", email="test@example.com"
+    )
+    session.add(user)
+    session.flush()
+    return user
+
+
+@pytest.fixture
+def other_user(session: Session) -> User:
+    """A second user, for asserting that per-user queries actually filter."""
+    user = User(
+        id=uuid.uuid4(), full_name="Other User", email="other@example.com"
+    )
+    session.add(user)
+    session.flush()
+    return user

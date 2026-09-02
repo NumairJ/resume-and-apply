@@ -1,0 +1,228 @@
+"""Request/response schemas for the profile side.
+
+Each resource follows the same shape: a `Base` holding the writable fields, a `Create`
+that adds nothing, an `Update` with every field optional so PATCH can be partial
+(apply with `model_dump(exclude_unset=True)`), and a `Read` that adds the id.
+"""
+
+import uuid
+from datetime import date
+
+from pydantic import BaseModel, ConfigDict, EmailStr
+
+
+class ORMModel(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+
+# --- User -------------------------------------------------------------------
+
+
+class UserBase(BaseModel):
+    full_name: str
+    email: EmailStr
+    phone: str | None = None
+    location: str | None = None
+    summary: str | None = None
+
+
+class UserUpdate(BaseModel):
+    full_name: str | None = None
+    email: EmailStr | None = None
+    phone: str | None = None
+    location: str | None = None
+    summary: str | None = None
+
+
+class UserRead(ORMModel, UserBase):
+    id: uuid.UUID
+
+
+# --- Education --------------------------------------------------------------
+
+
+class EducationBase(BaseModel):
+    school: str
+    degree: str
+    field_of_study: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    gpa: str | None = None
+    position: int = 0
+
+
+class EducationCreate(EducationBase):
+    pass
+
+
+class EducationUpdate(BaseModel):
+    school: str | None = None
+    degree: str | None = None
+    field_of_study: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    gpa: str | None = None
+    position: int | None = None
+
+
+class EducationRead(ORMModel, EducationBase):
+    id: uuid.UUID
+
+
+# --- Experience bullets -----------------------------------------------------
+
+
+class ExperienceBulletBase(BaseModel):
+    text: str
+    position: int = 0
+
+
+class ExperienceBulletCreate(ExperienceBulletBase):
+    pass
+
+
+class ExperienceBulletUpdate(BaseModel):
+    text: str | None = None
+    position: int | None = None
+
+
+class ExperienceBulletRead(ORMModel, ExperienceBulletBase):
+    id: uuid.UUID
+
+
+# --- Experience -------------------------------------------------------------
+
+
+class ExperienceBase(BaseModel):
+    company: str
+    title: str
+    location: str | None = None
+    start_date: date
+    end_date: date | None = None
+    position: int = 0
+
+
+class ExperienceCreate(ExperienceBase):
+    bullets: list[ExperienceBulletCreate] = []
+
+
+class ExperienceUpdate(BaseModel):
+    company: str | None = None
+    title: str | None = None
+    location: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    position: int | None = None
+
+
+class ExperienceRead(ORMModel, ExperienceBase):
+    id: uuid.UUID
+    bullets: list[ExperienceBulletRead] = []
+
+
+# --- Skill ------------------------------------------------------------------
+
+
+class SkillBase(BaseModel):
+    name: str
+    category: str | None = None
+    position: int = 0
+
+
+class SkillCreate(SkillBase):
+    pass
+
+
+class SkillUpdate(BaseModel):
+    name: str | None = None
+    category: str | None = None
+    position: int | None = None
+
+
+class SkillRead(ORMModel, SkillBase):
+    id: uuid.UUID
+
+
+# --- Project ----------------------------------------------------------------
+
+
+class ProjectBase(BaseModel):
+    name: str
+    description: str | None = None
+    url: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    position: int = 0
+
+
+class ProjectCreate(ProjectBase):
+    pass
+
+
+class ProjectUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    url: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    position: int | None = None
+
+
+class ProjectRead(ORMModel, ProjectBase):
+    id: uuid.UUID
+
+
+# --- Link -------------------------------------------------------------------
+
+
+class LinkBase(BaseModel):
+    label: str
+    url: str
+    position: int = 0
+
+
+class LinkCreate(LinkBase):
+    pass
+
+
+class LinkUpdate(BaseModel):
+    label: str | None = None
+    url: str | None = None
+    position: int | None = None
+
+
+class LinkRead(ORMModel, LinkBase):
+    id: uuid.UUID
+
+
+# --- Assembled profile ------------------------------------------------------
+
+
+class Profile(ORMModel):
+    """The whole profile in one object.
+
+    Both the tailoring prompt and the guardrail chain consume this, so there is one
+    definition of "the user's data" rather than two that drift apart.
+    """
+
+    id: uuid.UUID
+    full_name: str
+    email: EmailStr
+    phone: str | None = None
+    location: str | None = None
+    summary: str | None = None
+    education: list[EducationRead] = []
+    experiences: list[ExperienceRead] = []
+    skills: list[SkillRead] = []
+    projects: list[ProjectRead] = []
+    links: list[LinkRead] = []
+
+
+class ReorderRequest(BaseModel):
+    """Reorder a collection by sending its ids in the desired order.
+
+    One request rewriting every position beats per-item position updates, which race
+    each other and don't match how a drag-and-drop UI actually behaves.
+    """
+
+    ids: list[uuid.UUID]
