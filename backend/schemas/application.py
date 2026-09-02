@@ -57,6 +57,35 @@ class JobPostingRead(ORMModel, JobPostingBase):
     created_at: datetime
 
 
+# --- extraction -------------------------------------------------------------
+
+
+class ExtractRequest(BaseModel):
+    url: str
+
+
+class DuplicateWarning(BaseModel):
+    """Surfaced when this user already applied to a matching posting recently.
+
+    Advisory only — the UI offers "continue anyway", because reapplying after a
+    rejection is legitimate and a false positive must never block a real application.
+    """
+
+    application_id: uuid.UUID
+    status: ApplicationStatus
+    applied_at: date | None = None
+    first_seen: datetime
+    company: str
+    title: str
+
+
+class ExtractionResponse(BaseModel):
+    job: JobPostingRead
+    duplicate: DuplicateWarning | None = None
+    # True when this URL was already extracted and is still inside its TTL.
+    cached: bool = False
+
+
 # --- Applications -----------------------------------------------------------
 
 

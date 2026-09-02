@@ -1,0 +1,105 @@
+<!doctype html>
+<!--
+  Hand-built, unlike the other fixtures in this directory, which are real captures.
+
+  Real JSON-LD postings turned out hard to capture: the boards that publish it render
+  the markup client-side, so a saved page is a 7KB SPA shell with no structured data in
+  it. More importantly, a fixture written on purpose can carry every awkward shape the
+  parser has to survive, where a captured page would only ever prove one of them:
+
+    - the posting nested inside an @graph rather than at the top level
+    - a malformed ld+json block sitting before it, which must be skipped not fatal
+    - a non-JobPosting block, to prove the walk keeps looking
+    - description as an HTML string, entity-escaped
+    - jobLocation as a list
+    - baseSalary as a QuantitativeValue with min/max and a unit
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Senior Platform Engineer — Northwind Systems</title>
+  <meta property="og:type" content="website">
+
+  <!-- Malformed on purpose: must be skipped, not fatal. -->
+  <script type="application/ld+json">
+    { "@context": "https://schema.org", "@type": "Organization", }
+  </script>
+
+  <!-- Valid, but not a posting: the walk must keep going. -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Careers"}]
+  }
+  </script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "WebSite",
+        "name": "Northwind Systems Careers"
+      },
+      {
+        "@type": "JobPosting",
+        "title": "Senior Platform Engineer",
+        "datePosted": "2026-08-14",
+        "validThrough": "2026-11-14",
+        "employmentType": ["FULL_TIME", "CONTRACTOR"],
+        "url": "https://careers.northwind.example/jobs/senior-platform-engineer",
+        "hiringOrganization": {
+          "@type": "Organization",
+          "name": "Northwind Systems, Inc.",
+          "sameAs": "https://northwind.example"
+        },
+        "jobLocation": [
+          {
+            "@type": "Place",
+            "address": {
+              "@type": "PostalAddress",
+              "addressLocality": "Toronto",
+              "addressRegion": "Ontario",
+              "addressCountry": "CA"
+            }
+          }
+        ],
+        "baseSalary": {
+          "@type": "MonetaryAmount",
+          "currency": "CAD",
+          "value": {
+            "@type": "QuantitativeValue",
+            "minValue": 145000,
+            "maxValue": 185000,
+            "unitText": "YEAR"
+          }
+        },
+        "description": "&lt;div&gt;&lt;p&gt;We run the deployment platform every product team at Northwind ships on. You will own the build and release path end to end.&lt;/p&gt;&lt;h3&gt;Responsibilities&lt;/h3&gt;&lt;ul&gt;&lt;li&gt;Operate and extend our Kubernetes platform&lt;/li&gt;&lt;li&gt;Reduce p95 deploy time across the fleet&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;",
+        "qualifications": "&lt;ul&gt;&lt;li&gt;Six years building distributed systems in production&lt;/li&gt;&lt;li&gt;Depth in Go or Rust &amp;amp; strong Linux fundamentals&lt;/li&gt;&lt;/ul&gt;"
+      }
+    ]
+  }
+  </script>
+</head>
+<body>
+  <main>
+    <h1>Senior Platform Engineer</h1>
+    <p>Northwind Systems &middot; Toronto, Ontario</p>
+
+    <h2>Responsibilities</h2>
+    <ul>
+      <li>Operate and extend our Kubernetes platform</li>
+      <li>Reduce p95 deploy time across the fleet</li>
+    </ul>
+
+    <h2>Qualifications</h2>
+    <ul>
+      <li>Six years building distributed systems in production</li>
+      <li>Depth in Go or Rust</li>
+    </ul>
+
+    <a href="/apply/senior-platform-engineer">Apply now</a>
+  </main>
+</body>
+</html>

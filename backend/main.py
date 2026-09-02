@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from routers import profile
+from routers import jobs, profile
 
 
 def create_app() -> FastAPI:
@@ -9,6 +9,7 @@ def create_app() -> FastAPI:
     # Routers are mounted at their bare resource path. The Next.js rewrite strips the
     # /api prefix, so /api/profile in the browser arrives here as /profile.
     app.include_router(profile.router)
+    app.include_router(jobs.router)
 
     # Liveness only — deliberately no database query. The db service has its own
     # healthcheck and the backend waits on it, so querying here would add a failure
