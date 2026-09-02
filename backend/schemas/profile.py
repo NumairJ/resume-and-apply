@@ -8,11 +8,38 @@ that adds nothing, an `Update` with every field optional so PATCH can be partial
 import uuid
 from datetime import date
 
-from pydantic import BaseModel, ConfigDict, EmailStr
+from typing import Self
+
+from pydantic import BaseModel, ConfigDict, EmailStr, model_validator
 
 
 class ORMModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
+
+def ensure_chronological(start: date | None, end: date | None) -> None:
+    """Reject a date range that ends before it starts.
+
+    Applied at write time so the profile can never hold something that is guaranteed
+    to fail Phase 4's chronology guardrail. Catching it later would surface as a
+    generation error, pointing at the wrong culprit.
+    """
+    if start and end and end < start:
+        raise ValueError("end_date must not precede start_date")
+
+
+class ChronologyCheck:
+    """Mixin applying `ensure_chronological` to a schema's own two date fields.
+
+    This covers every create, and any partial update that happens to carry both
+    dates. An update sending only one of them cannot be checked here — the schema
+    can't see the stored value — so the PATCH routes re-check the merged result.
+    """
+
+    @model_validator(mode="after")
+    def _validate_dates(self) -> Self:
+        ensure_chronological(self.start_date, self.end_date)
+        return self
 
 
 # --- User -------------------------------------------------------------------
@@ -41,7 +68,7 @@ class UserRead(ORMModel, UserBase):
 # --- Education --------------------------------------------------------------
 
 
-class EducationBase(BaseModel):
+class EducationBase(ChronologyCheck, BaseModel):
     school: str
     degree: str
     field_of_study: str | None = None
@@ -93,7 +120,7 @@ class ExperienceBulletRead(ORMModel, ExperienceBulletBase):
 # --- Experience -------------------------------------------------------------
 
 
-class ExperienceBase(BaseModel):
+class ExperienceBase(ChronologyCheck, BaseModel):
     company: str
     title: str
     location: str | None = None
@@ -146,7 +173,7 @@ class SkillRead(ORMModel, SkillBase):
 # --- Project ----------------------------------------------------------------
 
 
-class ProjectBase(BaseModel):
+class ProjectBase(ChronologyCheck, BaseModel):
     name: str
     description: str | None = None
     url: str | None = None

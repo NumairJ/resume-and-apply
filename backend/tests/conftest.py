@@ -2,12 +2,15 @@ import uuid
 from collections.abc import Iterator
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 from core.config import settings
-from core.deps import DEFAULT_USER_ID
+from core.db import get_db
+from core.deps import DEFAULT_USER_ID, get_current_user_id
+from main import create_app
 from models.base import Base
 from models.profile import User
 
@@ -52,13 +55,25 @@ def engine() -> Iterator[Engine]:
 def session(engine: Engine) -> Iterator[Session]:
     """A session whose work is rolled back when the test ends.
 
-    The session is bound to an already-open transaction, so repository `flush()`
-    calls make data visible to the test without ever committing. Tests are therefore
-    fully isolated and leave no rows behind.
+    The session joins an already-open transaction on the connection, so everything it
+    does is undone at the end of the test — including the `session.commit()` that every
+    mutating route handler performs, which releases a savepoint rather than ending the
+    enclosing transaction.
+
+    `join_transaction_mode` is set explicitly rather than left to the default. The
+    SQLAlchemy 2.0 default, `conditional_savepoint`, already behaves this way when the
+    bound connection has a transaction open, which it always does here — so this pins
+    the behaviour we rely on instead of depending on a conditional default staying
+    conditional in our favour.
     """
     connection = engine.connect()
     transaction = connection.begin()
-    factory = sessionmaker(bind=connection, autoflush=False, expire_on_commit=False)
+    factory = sessionmaker(
+        bind=connection,
+        autoflush=False,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
     db = factory()
     try:
         yield db
@@ -91,3 +106,18 @@ def other_user(session: Session) -> User:
     session.add(user)
     session.flush()
     return user
+
+
+@pytest.fixture
+def client(session: Session, user: User) -> Iterator[TestClient]:
+    """A test client wired to the rolled-back session and the seeded user.
+
+    Overriding `get_db` is what keeps route tests isolated: handlers commit for real,
+    but against a session joined to the outer transaction, so it all unwinds.
+    """
+    app = create_app()
+    app.dependency_overrides[get_db] = lambda: session
+    app.dependency_overrides[get_current_user_id] = lambda: user.id
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()

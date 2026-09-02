@@ -1,7 +1,6 @@
 import uuid
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from models.profile import (
     Education,
@@ -86,8 +85,3 @@ class ExperienceBulletRepository(BaseRepository[ExperienceBullet]):
                 bullet.position = index
         self.session.flush()
         return self.list_for_experience(experience_id)
-
-
-def get_profile(session: Session, user_id: uuid.UUID) -> User | None:
-    """The user with every collection loaded — the object prompts and guardrails read."""
-    return session.get(User, user_id)

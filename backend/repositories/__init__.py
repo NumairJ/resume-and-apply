@@ -12,7 +12,6 @@ from repositories.profile import (
     ProjectRepository,
     SkillRepository,
     UserRepository,
-    get_profile,
 )
 
 __all__ = [
@@ -27,5 +26,4 @@ __all__ = [
     "ResumeRepository",
     "SkillRepository",
     "UserRepository",
-    "get_profile",
 ]
