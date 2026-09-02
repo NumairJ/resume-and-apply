@@ -2,6 +2,16 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# WeasyPrint (used from Phase 5 to render resume PDFs) links against these at import
+# time, not render time — so a missing package fails loudly on startup rather than
+# silently much later. Pango pulls cairo, harfbuzz and glib transitively.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libpango-1.0-0 \
+      libpangoft2-1.0-0 \
+      shared-mime-info \
+      fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
