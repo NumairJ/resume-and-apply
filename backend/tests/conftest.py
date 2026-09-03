@@ -13,6 +13,8 @@ from core.deps import DEFAULT_USER_ID, get_current_user_id
 from main import create_app
 from models.base import Base
 from models.profile import User
+from schemas.profile import Profile
+from tests.factories import sample_profile
 
 
 def _test_database_url() -> str:
@@ -121,3 +123,9 @@ def client(session: Session, user: User) -> Iterator[TestClient]:
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def profile() -> Profile:
+    """The shared sample profile used by the guardrail and tailoring suites."""
+    return sample_profile()

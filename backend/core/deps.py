@@ -1,7 +1,10 @@
 import uuid
+from typing import Annotated
 
-from fastapi import HTTPException, status
+from fastapi import Header, HTTPException, status
 
+from core.config import settings
+from services.llm import registry
 from services.llm.base import LLMProvider
 
 # This app runs locally for one person and has no authentication. Rather than thread a
@@ -27,15 +30,34 @@ NO_PROVIDER_MESSAGE = (
 )
 
 
-def get_llm_provider() -> LLMProvider:
-    """Resolve the provider for this request.
+def get_llm_provider(
+    x_llm_provider: Annotated[str | None, Header()] = None,
+    x_llm_model: Annotated[str | None, Header()] = None,
+    x_llm_api_key: Annotated[str | None, Header()] = None,
+) -> LLMProvider:
+    """Resolve the provider for this request from headers, with an .env fallback.
 
-    Phase 4 replaces this body with the registry lookup that reads the provider name
-    and API key from request headers. Until then it refuses.
+    The key arrives per-request from the browser, where the provider switcher holds it
+    in localStorage. It is used to construct the client and **never written to the
+    database or a log** — the only copy the server keeps is the one inside the SDK
+    client for the life of the request.
 
-    `FakeLLMProvider` is deliberately *not* wired in as a fallback: a fake reachable
-    in production would serve invented job details as though they had been extracted
-    from the page, which is a much worse failure than an honest 503. Tests override
-    the injection point directly.
+    The `.env` fallback exists for local development so the app is usable without
+    pasting a key into the UI on every session.
+
+    `FakeLLMProvider` is deliberately not reachable here: a fake in production would
+    serve invented job details and invented resumes as though they were real.
     """
-    raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, NO_PROVIDER_MESSAGE)
+    name = x_llm_provider or registry.AnthropicProvider.name
+    api_key = x_llm_api_key or settings.anthropic_api_key
+
+    if not api_key:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, NO_PROVIDER_MESSAGE)
+
+    try:
+        return registry.get_provider(name, api_key=api_key, model=x_llm_model)
+    except registry.UnknownProvider as exc:
+        # str() on a KeyError adds quotes; args[0] is the message we wrote.
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, exc.args[0]
+        ) from exc

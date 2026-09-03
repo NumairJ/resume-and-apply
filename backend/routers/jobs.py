@@ -7,14 +7,14 @@ rewrite strips that prefix, so the browser's `/api/jobs/extract` arrives as
 
 import uuid
 from collections.abc import Iterator
-from typing import Any
+from typing import Annotated, Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
 from core.db import get_db
-from core.deps import NO_PROVIDER_MESSAGE, get_current_user_id
+from core.deps import NO_PROVIDER_MESSAGE, get_current_user_id, get_llm_provider
 from models.application import Application
 from repositories.application import JobPostingRepository
 from schemas.application import (
@@ -41,14 +41,23 @@ def get_http_client() -> Iterator[httpx.Client]:
         yield client
 
 
-def get_optional_provider() -> LLMProvider | None:
-    """The provider injection point for extraction.
+def get_optional_provider(
+    x_llm_provider: Annotated[str | None, Header()] = None,
+    x_llm_model: Annotated[str | None, Header()] = None,
+    x_llm_api_key: Annotated[str | None, Header()] = None,
+) -> LLMProvider | None:
+    """The provider injection point for extraction, or None if none is configured.
 
-    Returns None in production, which lets the pipeline run every free stage and only
-    fail at the one that actually needs a model — so supported job boards keep working
-    with no provider configured. Tests override this dependency with a fake.
+    None rather than an error, so the free stages still run: a Greenhouse or JSON-LD
+    URL is extracted fine with no key anywhere. Only a page that genuinely needs the
+    model reaches `LLMUnavailable`, which the route turns into a 503.
+
+    Tests override this dependency with a fake.
     """
-    return None
+    try:
+        return get_llm_provider(x_llm_provider, x_llm_model, x_llm_api_key)
+    except HTTPException:
+        return None
 
 
 @router.post("/extract", response_model=ExtractionResponse)
