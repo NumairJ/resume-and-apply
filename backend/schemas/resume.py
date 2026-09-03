@@ -98,8 +98,13 @@ class GenerateResumeRequest(BaseModel):
 
 
 class GenerateResumeResponse(BaseModel):
+    # The generation is persisted, so these two identify what was written: the PDF to
+    # preview or download, and the application it now belongs to.
+    resume_id: uuid.UUID
+    application_id: uuid.UUID
     resume: Resume
-    # Surfaced on the Apply page as "why these bullets".
+    # Surfaced on the Apply page as "why these bullets". Deliberately not stored — the
+    # response carries it, and what the UI needs beyond that is a Phase 7 question.
     rationale: str
     provider: str
     model: str

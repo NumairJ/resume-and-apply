@@ -1,5 +1,6 @@
 import uuid
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -129,3 +130,17 @@ def client(session: Session, user: User) -> Iterator[TestClient]:
 def profile() -> Profile:
     """The shared sample profile used by the guardrail and tailoring suites."""
     return sample_profile()
+
+
+@pytest.fixture(autouse=True)
+def resume_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Redirect generated resumes to a per-test directory.
+
+    Autouse deliberately: `/data/resumes` is a real named volume holding the user's
+    actual PDFs, and a route test that generates a resume would otherwise write into
+    it. Opting in per test would mean remembering to, which is exactly the kind of
+    thing that gets forgotten once.
+    """
+    target = tmp_path / "resumes"
+    monkeypatch.setattr(settings, "resume_dir", target)
+    return target

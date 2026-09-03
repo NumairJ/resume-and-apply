@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import delete, select
+from sqlalchemy.orm import selectinload
 
 from models.application import Application, JobPosting, Resume
 from repositories.base import BaseRepository
@@ -54,9 +55,18 @@ class ApplicationRepository(BaseRepository[Application]):
     model = Application
 
     def list_for_user(self, user_id: uuid.UUID) -> list[Application]:
+        """Newest first, with the posting and resumes loaded.
+
+        Eager-loaded because `ApplicationRead` serialises both: without this the
+        applications table costs two extra queries per row.
+        """
         stmt = (
             select(Application)
             .where(Application.user_id == user_id)
+            .options(
+                selectinload(Application.job_posting),
+                selectinload(Application.resumes),
+            )
             .order_by(Application.created_at.desc())
         )
         return list(self.session.scalars(stmt))

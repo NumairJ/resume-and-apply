@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from routers import jobs, profile, providers, resumes
+from routers import applications, jobs, profile, providers, resumes
 
 
 def create_app() -> FastAPI:
@@ -12,6 +12,7 @@ def create_app() -> FastAPI:
     app.include_router(jobs.router)
     app.include_router(providers.router)
     app.include_router(resumes.router)
+    app.include_router(applications.router)
 
     # Liveness only — deliberately no database query. The db service has its own
     # healthcheck and the backend waits on it, so querying here would add a failure

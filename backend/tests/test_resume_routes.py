@@ -1,17 +1,24 @@
 """Routes for /providers and /resumes/generate."""
 
+import hashlib
 import uuid
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from core.deps import get_llm_provider
-from models.enums import ExtractionMethod
+from core.deps import DEFAULT_USER_ID, get_llm_provider
+from models.enums import ApplicationStatus, ExtractionMethod
 from models.profile import User
-from repositories.application import JobPostingRepository
+from repositories.application import (
+    ApplicationRepository,
+    JobPostingRepository,
+    ResumeRepository,
+)
 from repositories.profile import ExperienceBulletRepository, ExperienceRepository, SkillRepository
+from services import render
 from services.llm.anthropic_provider import DEFAULT_MODEL
 from services.llm.base import LLMError
 from services.llm.fake import FakeLLMProvider
@@ -24,6 +31,9 @@ POSTING = {
     "source_url": "https://example.com/jobs/1",
     "fingerprint": "fp",
     "extraction_method": ExtractionMethod.LLM,
+    # As a freshly extracted posting is: provisional until something tracks it. Without
+    # this the "generating makes the posting permanent" assertions would pass vacuously.
+    "expires_at": datetime.now(timezone.utc) + timedelta(hours=24),
 }
 
 
@@ -107,14 +117,18 @@ def test_providers_lists_models_and_leaks_nothing(client: TestClient) -> None:
 # --- /resumes/generate ------------------------------------------------------
 
 
-def test_generate_returns_resume_and_rationale(client: TestClient, seeded: dict) -> None:
-    provider = FakeLLMProvider([valid_resume()])
+def generate(client: TestClient, seeded: dict, responses=None) -> dict:
+    provider = FakeLLMProvider(responses or [valid_resume()])
     response = with_provider(client, provider).post(
         "/resumes/generate", json={"job_posting_id": seeded["posting_id"]}
     )
+    assert response.status_code == 200, response.text
+    return response.json()
 
-    assert response.status_code == 200
-    body = response.json()
+
+def test_generate_returns_resume_and_rationale(client: TestClient, seeded: dict) -> None:
+    body = generate(client, seeded)
+
     assert body["rationale"]
     assert body["attempts"] == 1
     assert body["prompt_version"] == "tailor_resume.v1"
@@ -211,3 +225,140 @@ def test_unknown_provider_header_is_400(
     )
     assert response.status_code == 400
     assert "not-a-provider" in response.json()["detail"]
+
+
+# --- what generation persists -----------------------------------------------
+
+
+def test_generate_writes_a_row_and_both_files(
+    client: TestClient, session: Session, seeded: dict, resume_dir: Path
+) -> None:
+    body = generate(client, seeded)
+    resume_id = uuid.UUID(body["resume_id"])
+
+    row = ResumeRepository(session).get(resume_id)
+    assert row is not None
+    assert row.application_id == uuid.UUID(body["application_id"])
+    assert row.provider == "fake"
+    assert row.prompt_version == "tailor_resume.v1"
+
+    assert (resume_dir / f"{resume_id}.pdf").is_file()
+    assert (resume_dir / f"{resume_id}.html").is_file()
+    assert row.file_path == str(resume_dir / f"{resume_id}.pdf")
+
+
+def test_stored_hash_matches_the_pdf_on_disk(
+    client: TestClient, session: Session, seeded: dict
+) -> None:
+    """The whole point of storing a hash instead of the bytes."""
+    body = generate(client, seeded)
+    row = ResumeRepository(session).get(uuid.UUID(body["resume_id"]))
+
+    on_disk = hashlib.sha256(Path(row.file_path).read_bytes()).hexdigest()
+    assert row.content_hash == on_disk
+
+
+def test_generate_creates_a_saved_application_and_pins_the_posting(
+    client: TestClient, session: Session, seeded: dict
+) -> None:
+    """A generated resume needs a parent, so generation is also a save."""
+    body = generate(client, seeded)
+
+    application = ApplicationRepository(session).get(
+        uuid.UUID(body["application_id"])
+    )
+    assert application.status == ApplicationStatus.SAVED
+
+    posting = JobPostingRepository(session).get(uuid.UUID(seeded["posting_id"]))
+    assert posting.expires_at is None
+
+
+def test_regenerating_adds_a_second_resume_to_the_same_application(
+    client: TestClient, session: Session, seeded: dict
+) -> None:
+    """Regenerating is a feature; keeping the earlier attempt costs nothing."""
+    first = generate(client, seeded)
+    second = generate(client, seeded)
+
+    assert first["resume_id"] != second["resume_id"]
+    assert first["application_id"] == second["application_id"]
+    assert len(
+        ResumeRepository(session).list_for_application(
+            uuid.UUID(first["application_id"])
+        )
+    ) == 2
+
+
+def test_a_rejected_generation_leaves_nothing_behind(
+    client: TestClient, session: Session, seeded: dict, resume_dir: Path
+) -> None:
+    """Tailoring runs before anything is persisted, so a refusal creates no
+    application, no row, and no orphan PDF."""
+    provider = FakeLLMProvider([broken_resume()] * 3)
+    response = with_provider(client, provider).post(
+        "/resumes/generate", json={"job_posting_id": seeded["posting_id"]}
+    )
+
+    assert response.status_code == 422
+    assert ApplicationRepository(session).list_for_user(DEFAULT_USER_ID) == []
+    assert not resume_dir.exists() or list(resume_dir.iterdir()) == []
+
+    posting = JobPostingRepository(session).get(uuid.UUID(seeded["posting_id"]))
+    assert posting.expires_at is not None
+
+
+# --- preview and download ---------------------------------------------------
+
+
+def test_preview_returns_the_html_the_pdf_was_made_from(
+    client: TestClient, seeded: dict, resume_dir: Path
+) -> None:
+    body = generate(client, seeded)
+    response = client.get(f"/resumes/{body['resume_id']}/preview")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert response.text == (resume_dir / f"{body['resume_id']}.html").read_text(
+        encoding="utf-8"
+    )
+    assert "Northwind Systems" in response.text
+
+
+def test_download_returns_the_pdf(client: TestClient, seeded: dict) -> None:
+    body = generate(client, seeded)
+    response = client.get(f"/resumes/{body['resume_id']}/download")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.content.startswith(b"%PDF-")
+    # Named after the employer, not after a UUID the user has never seen.
+    assert "resume-globex.pdf" in response.headers["content-disposition"]
+
+
+def test_a_missing_file_is_404_not_500(client: TestClient, seeded: dict) -> None:
+    """The PDFs live on a volume the database knows nothing about, so a row whose file
+    has gone is a real state to be in."""
+    body = generate(client, seeded)
+    render.remove_files(uuid.UUID(body["resume_id"]))
+
+    assert client.get(f"/resumes/{body['resume_id']}/preview").status_code == 404
+    assert client.get(f"/resumes/{body['resume_id']}/download").status_code == 404
+
+
+def test_unknown_resume_is_404(client: TestClient) -> None:
+    assert client.get(f"/resumes/{uuid.uuid4()}/preview").status_code == 404
+    assert client.get(f"/resumes/{uuid.uuid4()}/download").status_code == 404
+
+
+def test_another_users_resume_is_404_not_403(
+    client: TestClient, session: Session, other_user: User, seeded: dict
+) -> None:
+    body = generate(client, seeded)
+    application = ApplicationRepository(session).get(
+        uuid.UUID(body["application_id"])
+    )
+    application.user_id = other_user.id
+    session.commit()
+
+    assert client.get(f"/resumes/{body['resume_id']}/preview").status_code == 404
+    assert client.get(f"/resumes/{body['resume_id']}/download").status_code == 404
