@@ -3,6 +3,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 
+import { ToastProvider } from "@/components/Toast";
+
 export default function Providers({ children }: { children: React.ReactNode }) {
   // Created inside useState, not as a module-level constant. A module-level client is
   // shared across requests during server rendering, which would leak one render's cache
@@ -21,5 +23,9 @@ export default function Providers({ children }: { children: React.ReactNode }) {
       }),
   );
 
-  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  return (
+    <QueryClientProvider client={client}>
+      <ToastProvider>{children}</ToastProvider>
+    </QueryClientProvider>
+  );
 }

@@ -1,23 +1,68 @@
 @import "tailwindcss";
 
-/* Tailwind v4 is configured in CSS, not in a tailwind.config file — v4 needs no config
-   file by default, so there isn't one until something actually requires it. */
+/* Swiss/editorial, light only.
+   Structure comes from alignment, hairline rules and whitespace — not from boxes,
+   shadows or colour. There is deliberately no dark palette: a white design that
+   silently inverts on half of machines is really two designs, and the second one
+   never gets the attention it needs. */
 @theme {
-  --color-background: #ffffff;
-  --color-foreground: #171717;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+
+  --color-paper: #ffffff;
+  /* Not pure black. #111 keeps the contrast without the harsh edge pure black gives
+     against white at small sizes. */
+  --color-ink: #111111;
+  --color-muted: #6b6b6b;
+  --color-faint: #9b9b9b;
+  --color-rule: #e5e5e5;
+  --color-wash: #fafafa;
+
+  /* One accent, for links and focus only. Buttons are black — colour is reserved for
+     places where meaning depends on it. */
+  --color-accent: #1c4ed8;
+  --color-positive: #15803d;
+  --color-negative: #b3261e;
 }
 
-/* The scaffold respected the OS colour scheme and it costs two rules to keep doing so.
-   Dropping it would make the app the only thing on the machine ignoring dark mode. */
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: dark;
-    --color-background: #0a0a0a;
-    --color-foreground: #ededed;
+@layer base {
+  body {
+    background-color: var(--color-paper);
+    color: var(--color-ink);
+  }
+
+  /* Every date, count and column of numbers lines up down the page. */
+  table,
+  time,
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* One focus treatment everywhere, and it must stay visible — the whole UI is
+     keyboard-reachable and a hairline design hides a weak focus ring completely. */
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  a {
+    color: inherit;
   }
 }
 
-body {
-  background: var(--color-background);
-  color: var(--color-foreground);
+@utility label-xs {
+  /* The uppercase micro-label: column headers, field labels, section eyebrows.
+     Deliberately sets no colour — the navbar wordmark uses it in ink and everything
+     else in muted, and baking one in means the other needs !important to escape. */
+  font-size: 0.6875rem;
+  line-height: 1rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+@utility display {
+  /* Tight negative tracking is what makes a large heading read as typeset rather
+     than merely big. */
+  letter-spacing: -0.025em;
+  text-wrap: balance;
 }

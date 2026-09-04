@@ -42,6 +42,9 @@ import type {
   User,
   UserUpdate,
 } from "@/types/api";
+// The provider switcher's settings live in their own module because two unrelated
+// places need them: it writes, and `request()` below reads on every call.
+import { providerHeaders } from "@/lib/providerSettings";
 
 const BASE = "/api";
 
@@ -68,37 +71,6 @@ export class ApiError extends Error {
     if (typeof this.detail === "string") return [];
     return this.detail.violations ?? this.detail.reasons ?? [];
   }
-}
-
-/** Where the provider switcher keeps its state. The key never leaves the browser. */
-export const PROVIDER_STORAGE_KEY = "resume-and-apply.llm";
-
-export interface ProviderSettings {
-  provider?: string;
-  model?: string;
-  apiKey?: string;
-}
-
-function providerHeaders(): Record<string, string> {
-  // No localStorage during server rendering — and nothing to send from there anyway.
-  if (typeof window === "undefined") return {};
-
-  const stored = window.localStorage.getItem(PROVIDER_STORAGE_KEY);
-  if (!stored) return {};
-
-  let settings: ProviderSettings;
-  try {
-    settings = JSON.parse(stored) as ProviderSettings;
-  } catch {
-    // A corrupted entry must not break every request in the app.
-    return {};
-  }
-
-  const headers: Record<string, string> = {};
-  if (settings.provider) headers["X-LLM-Provider"] = settings.provider;
-  if (settings.model) headers["X-LLM-Model"] = settings.model;
-  if (settings.apiKey) headers["X-LLM-Api-Key"] = settings.apiKey;
-  return headers;
 }
 
 async function readDetail(response: Response): Promise<ErrorDetail> {
