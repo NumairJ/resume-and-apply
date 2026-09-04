@@ -33,6 +33,8 @@ export function ProfileSection<
   view,
   form,
   nested,
+  groupBy,
+  actions,
   addLabel = "Add",
 }: {
   title: string;
@@ -45,6 +47,13 @@ export function ProfileSection<
   form: (draft: Create, set: (patch: Partial<Create>) => void) => ReactNode;
   /** Extra content under a row — used for an experience's bullets. */
   nested?: (item: Read) => ReactNode;
+  /**
+   * Bucket rows under headings. Only skills use this; without it the list is flat, so
+   * the other four sections are unaffected. Return "" for rows that have no group.
+   */
+  groupBy?: (item: Read) => string;
+  /** Extra controls beside the Add button — used for the skills bulk-paste panel. */
+  actions?: ReactNode;
   addLabel?: string;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
@@ -110,13 +119,48 @@ export function ProfileSection<
     setDraft(body as Create);
   }
 
-  /** Swap with the neighbour and send the whole new order, as the endpoint expects. */
-  function move(index: number, by: -1 | 1) {
-    const next = [...items];
+  /**
+   * Items in display order, bucketed when `groupBy` is supplied.
+   *
+   * One bucket named "" when it is not, so the rendering below has a single shape to
+   * deal with rather than two.
+   */
+  const groups: { label: string; items: Read[] }[] = [];
+  for (const item of items) {
+    const label = groupBy ? groupBy(item) : "";
+    const bucket = groups.find((group) => group.label === label);
+    if (bucket) bucket.items.push(item);
+    else groups.push({ label, items: [item] });
+  }
+  // An empty label means uncategorised, and those belong after the named groups rather
+  // than wherever the first one happened to fall.
+  groups.sort((a, b) => Number(a.label === "") - Number(b.label === ""));
+
+  /**
+   * Swap with the neighbour **inside the same group** and send the whole new order.
+   *
+   * Scoped to the group because moving across a category boundary would look like the
+   * grouped view had rejected the change: the row would jump somewhere unrelated, or
+   * appear not to move at all once regrouped. The endpoint rewrites every position, so
+   * the flattened order of all groups is what gets sent either way.
+   */
+  function move(label: string, index: number, by: -1 | 1) {
+    const group = groups.find((candidate) => candidate.label === label);
+    if (!group) return;
+
     const target = index + by;
-    if (target < 0 || target >= next.length) return;
-    [next[index], next[target]] = [next[target], next[index]];
-    reorder.mutate(next.map((item) => item.id));
+    if (target < 0 || target >= group.items.length) return;
+
+    const reordered = [...group.items];
+    [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
+
+    reorder.mutate(
+      groups
+        .flatMap((candidate) =>
+          candidate.label === label ? reordered : candidate.items,
+        )
+        .map((item) => item.id),
+    );
   }
 
   const editor = draft && (
@@ -154,9 +198,12 @@ export function ProfileSection<
             <p className="mt-1 text-sm text-muted">{description}</p>
           )}
         </div>
-        <Button size="sm" onClick={startAdd} disabled={editing !== null}>
-          {addLabel}
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          {actions}
+          <Button size="sm" onClick={startAdd} disabled={editing !== null}>
+            {addLabel}
+          </Button>
+        </div>
       </div>
 
       {editing === "new" && <div className="mb-4">{editor}</div>}
@@ -165,58 +212,69 @@ export function ProfileSection<
         <Empty>Nothing here yet.</Empty>
       )}
 
-      <ul>
-        {items.map((item, index) => (
-          <li key={item.id} className="border-t border-rule py-4">
-            {editing === item.id ? (
-              editor
-            ) : (
-              <>
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0 flex-1">{view(item)}</div>
-                  <div className="flex shrink-0 items-center gap-1">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      aria-label={`Move up`}
-                      disabled={index === 0 || reorder.isPending}
-                      onClick={() => move(index, -1)}
-                    >
-                      ↑
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      aria-label={`Move down`}
-                      disabled={index === items.length - 1 || reorder.isPending}
-                      onClick={() => move(index, 1)}
-                    >
-                      ↓
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => startEdit(item)}
-                      disabled={editing !== null}
-                    >
-                      Edit
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => setDeleting(item)}
-                      className="hover:text-negative"
-                    >
-                      Remove
-                    </Button>
-                  </div>
-                </div>
-                {nested?.(item)}
-              </>
-            )}
-          </li>
-        ))}
-      </ul>
+      {groups.map((group) => (
+        <div key={group.label || "uncategorised"}>
+          {groupBy && (
+            <h3 className="label-xs mt-6 text-faint first:mt-0">
+              {group.label || "Uncategorised"}
+            </h3>
+          )}
+          <ul>
+            {group.items.map((item, index) => (
+              <li key={item.id} className="border-t border-rule py-4">
+                {editing === item.id ? (
+                  editor
+                ) : (
+                  <>
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0 flex-1">{view(item)}</div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          aria-label="Move up"
+                          disabled={index === 0 || reorder.isPending}
+                          onClick={() => move(group.label, index, -1)}
+                        >
+                          ↑
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          aria-label="Move down"
+                          disabled={
+                            index === group.items.length - 1 || reorder.isPending
+                          }
+                          onClick={() => move(group.label, index, 1)}
+                        >
+                          ↓
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => startEdit(item)}
+                          disabled={editing !== null}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setDeleting(item)}
+                          className="hover:text-negative"
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    </div>
+                    {nested?.(item)}
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
 
       <ConfirmModal
         open={deleting !== null}

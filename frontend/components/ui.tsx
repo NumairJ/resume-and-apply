@@ -112,11 +112,18 @@ export function Field({
   className?: string;
 }) {
   return (
-    <label className={cx("block", className)}>
-      <span className="label-xs mb-1.5 block text-muted">{label}</span>
-      {children}
-      {hint && <span className="mt-1 block text-xs text-muted">{hint}</span>}
-    </label>
+    // The hint sits *outside* the <label> on purpose. Inside, it becomes part of the
+    // field's accessible name — a screen reader would announce this control as
+    // "Skills Separated by commas or new lines. Ones you already have are skipped."
+    // rather than "Skills". Adjacent help text still reads in order; it just stops
+    // impersonating the label.
+    <div className={cx("block", className)}>
+      <label className="block">
+        <span className="label-xs mb-1.5 block text-muted">{label}</span>
+        {children}
+      </label>
+      {hint && <p className="mt-1 text-xs text-muted">{hint}</p>}
+    </div>
   );
 }
 

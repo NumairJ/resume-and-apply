@@ -7,6 +7,11 @@ import { dateRange } from "@/lib/format";
 import { keys, useInvalidatingMutation, useProfile } from "@/lib/queries";
 import { BulletEditor } from "@/components/BulletEditor";
 import { ProfileSection } from "@/components/ProfileSection";
+import {
+  CATEGORY_LIST_ID,
+  SkillCategoryOptions,
+  SkillsBulkAdd,
+} from "@/components/SkillsBulkAdd";
 import { useToast } from "@/components/Toast";
 import { Button, Empty, Field, Input, Page, PageHeader, Textarea } from "@/components/ui";
 import type { Profile, UserUpdate } from "@/types/api";
@@ -176,21 +181,20 @@ function Sections({ profile: data }: { profile: Profile }) {
         )}
       />
 
+      {/* One datalist serves both category inputs — the single-skill form below and the
+          bulk panel's — so whatever you have already typed is offered in both places. */}
+      <SkillCategoryOptions skills={data.skills} />
+
       <ProfileSection
         title="Skills"
         description="A resume may only list skills that appear here — this is a set-membership check, not a judgement call."
         items={data.skills}
         collection={skills}
         addLabel="Add skill"
+        actions={<SkillsBulkAdd skills={data.skills} />}
+        groupBy={(item) => item.category?.trim() ?? ""}
         blank={() => ({ name: "", category: null, position: data.skills.length })}
-        view={(item) => (
-          <p>
-            {item.name}
-            {item.category && (
-              <span className="text-muted"> · {item.category}</span>
-            )}
-          </p>
-        )}
+        view={(item) => <p>{item.name}</p>}
         form={(draft, set) => (
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Skill">
@@ -202,6 +206,7 @@ function Sections({ profile: data }: { profile: Profile }) {
             </Field>
             <Field label="Category" hint="Languages, Databases, Infrastructure…">
               <Input
+                list={CATEGORY_LIST_ID}
                 value={draft.category ?? ""}
                 onChange={(e) => set({ category: e.target.value || null })}
               />

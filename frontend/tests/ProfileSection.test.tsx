@@ -129,6 +129,81 @@ describe("ProfileSection", () => {
   });
 });
 
+describe("ProfileSection, grouped", () => {
+  const grouped = [
+    { id: "s-1", name: "Python", category: "Languages", position: 0 },
+    { id: "s-2", name: "Postgres", category: "Databases", position: 1 },
+    { id: "s-3", name: "Go", category: "Languages", position: 2 },
+    { id: "s-4", name: "Curiosity", category: null, position: 3 },
+  ];
+
+  function Grouped() {
+    return (
+      <ProfileSection<Skill, SkillCreate, SkillUpdate>
+        title="Skills"
+        items={grouped}
+        collection={skillsApi}
+        groupBy={(item) => item.category?.trim() ?? ""}
+        blank={() => ({ name: "", category: null, position: grouped.length })}
+        view={(item) => <p>{item.name}</p>}
+        form={(draft, set) => (
+          <Field label="Skill">
+            <Input value={draft.name} onChange={(e) => set({ name: e.target.value })} />
+          </Field>
+        )}
+      />
+    );
+  }
+
+  it("buckets rows under their category, uncategorised last", () => {
+    render(<Grouped />);
+
+    const headings = screen
+      .getAllByRole("heading", { level: 3 })
+      .map((heading) => heading.textContent);
+    expect(headings).toEqual(["Languages", "Databases", "Uncategorised"]);
+  });
+
+  it("puts each row under the right heading", () => {
+    render(<Grouped />);
+    const lists = screen.getAllByRole("list");
+
+    expect(within(lists[0]).getByText("Python")).toBeVisible();
+    expect(within(lists[0]).getByText("Go")).toBeVisible();
+    expect(within(lists[1]).getByText("Postgres")).toBeVisible();
+  });
+
+  it("will not move a row out of its group", () => {
+    // Postgres is the second row overall but the first in Databases. Ungrouped, ↑ would
+    // swap it with Python and it would appear to jump into another category.
+    render(<Grouped />);
+    const databases = screen.getAllByRole("list")[1];
+
+    expect(
+      within(databases).getByRole("button", { name: /move up/i }),
+    ).toBeDisabled();
+    expect(
+      within(databases).getByRole("button", { name: /move down/i }),
+    ).toBeDisabled();
+  });
+
+  it("reorders within a group but still sends the whole global order", async () => {
+    const user = userEvent.setup();
+    render(<Grouped />);
+    const languages = screen.getAllByRole("list")[0];
+
+    // Move Go above Python inside Languages.
+    await user.click(
+      within(languages).getAllByRole("button", { name: /move up/i })[1],
+    );
+
+    await waitFor(() => expect(recorded).toHaveLength(1));
+    // Every id, because the endpoint rewrites every position — and the other groups
+    // keep their relative order.
+    expect(recorded[0].body).toEqual({ ids: ["s-3", "s-1", "s-2", "s-4"] });
+  });
+});
+
 describe("BulletEditor", () => {
   it("reorders bullets within their own experience", async () => {
     const user = userEvent.setup();
