@@ -10,7 +10,7 @@ import { JobDetailsCard } from "@/components/JobDetailsCard";
 import { ResumePreview } from "@/components/ResumePreview";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useToast } from "@/components/Toast";
-import { Button, Input, Page, PageHeader } from "@/components/ui";
+import { Button, Input, Page, PageHeader, buttonClass } from "@/components/ui";
 import type {
   DuplicateWarning,
   GenerateResumeResponse,
@@ -244,8 +244,8 @@ export default function ApplyPage() {
               >
                 Mark as applied
               </Button>
-              <Link href="/applications">
-                <Button>View applications</Button>
+              <Link href="/applications" className={buttonClass()}>
+                View applications
               </Link>
             </div>
           </div>

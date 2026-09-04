@@ -1,7 +1,7 @@
 "use client";
 
 import { resumes } from "@/lib/api";
-import { Button } from "@/components/ui";
+import { buttonClass } from "@/components/ui";
 import type { GenerateResumeResponse } from "@/types/api";
 
 /**
@@ -18,10 +18,12 @@ export function ResumePreview({ result }: { result: GenerateResumeResponse }) {
       <div>
         <div className="mb-3 flex items-center justify-between">
           <h2 className="label-xs text-muted">Preview</h2>
-          <a href={resumes.downloadUrl(result.resume_id)} download>
-            <Button size="sm" variant="primary">
-              Download PDF
-            </Button>
+          <a
+            href={resumes.downloadUrl(result.resume_id)}
+            download
+            className={buttonClass("primary", "sm")}
+          >
+            Download PDF
           </a>
         </div>
         <iframe

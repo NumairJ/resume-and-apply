@@ -19,6 +19,10 @@ frontend/.yarn/*
 
 # testing
 frontend/coverage
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+frontend/.playwright/
 
 # next.js
 frontend/.next/

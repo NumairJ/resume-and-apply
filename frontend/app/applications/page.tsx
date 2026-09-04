@@ -4,7 +4,7 @@ import Link from "next/link";
 
 import { useApplications } from "@/lib/queries";
 import { ApplicationsTable } from "@/components/ApplicationsTable";
-import { Button, Empty, Page, PageHeader } from "@/components/ui";
+import { Empty, Page, PageHeader, buttonClass } from "@/components/ui";
 
 export default function ApplicationsPage() {
   const { data, isPending, isError, error } = useApplications();
@@ -14,8 +14,8 @@ export default function ApplicationsPage() {
       <PageHeader
         title="Applications"
         actions={
-          <Link href="/apply">
-            <Button variant="primary">Tailor a resume</Button>
+          <Link href="/apply" className={buttonClass("primary")}>
+            Tailor a resume
           </Link>
         }
       >

@@ -8,7 +8,7 @@ import { keys, useInvalidatingMutation } from "@/lib/queries";
 import { ConfirmModal, Modal } from "@/components/Modal";
 import { STATUSES, StatusDot, label } from "@/components/StatusBadge";
 import { useToast } from "@/components/Toast";
-import { Button, Empty, Input, Select, Textarea, cx } from "@/components/ui";
+import { Button, Empty, Input, Select, Textarea, buttonClass, cx } from "@/components/ui";
 import type { Application, ApplicationStatus } from "@/types/api";
 
 type SortKey = "company" | "status" | "updated";
@@ -224,11 +224,16 @@ export function ApplicationsTable({ rows }: { rows: Application[] }) {
                         href={resumes.previewUrl(latest.id)}
                         target="_blank"
                         rel="noreferrer"
+                        className={buttonClass("secondary", "sm")}
                       >
-                        <Button size="sm">View</Button>
+                        View
                       </a>
-                      <a href={resumes.downloadUrl(latest.id)} download>
-                        <Button size="sm">PDF</Button>
+                      <a
+                        href={resumes.downloadUrl(latest.id)}
+                        download
+                        className={buttonClass("secondary", "sm")}
+                      >
+                        PDF
                       </a>
                     </span>
                   ) : (

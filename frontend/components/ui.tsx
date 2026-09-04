@@ -30,6 +30,31 @@ const VARIANTS: Record<Variant, string> = {
   danger: "border border-rule text-negative hover:border-negative",
 };
 
+/**
+ * The button look, as a class string.
+ *
+ * Exported so that **links can look like buttons without being buttons**. Wrapping a
+ * `<button>` in an `<a>` is invalid HTML — nested interactive content — and leaves
+ * assistive technology announcing a control inside a control. Anything that navigates
+ * or downloads is an `<a>` carrying this class; only things that act on the current
+ * page are `<button>`.
+ */
+export function buttonClass(
+  variant: Variant = "secondary",
+  size: "sm" | "md" = "md",
+  className?: string,
+): string {
+  return cx(
+    // 2px, not square: a control has to read as pressable, and this is the least
+    // rounding that does that without softening the page.
+    "inline-flex items-center justify-center gap-1.5 rounded-[2px]",
+    "transition-colors disabled:cursor-not-allowed",
+    size === "sm" ? "h-7 px-2.5 text-xs" : "h-9 px-3.5 text-sm",
+    VARIANTS[variant],
+    className,
+  );
+}
+
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: Variant;
   size?: "sm" | "md";
@@ -41,20 +66,7 @@ export function Button({
   className,
   ...props
 }: ButtonProps) {
-  return (
-    <button
-      className={cx(
-        // 2px, not square: a control has to read as pressable, and this is the least
-        // rounding that does that without softening the page.
-        "inline-flex items-center justify-center gap-1.5 rounded-[2px]",
-        "transition-colors disabled:cursor-not-allowed",
-        size === "sm" ? "h-7 px-2.5 text-xs" : "h-9 px-3.5 text-sm",
-        VARIANTS[variant],
-        className,
-      )}
-      {...props}
-    />
-  );
+  return <button className={buttonClass(variant, size, className)} {...props} />;
 }
 
 // --- form controls ----------------------------------------------------------
