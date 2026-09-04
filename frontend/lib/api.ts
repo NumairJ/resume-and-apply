@@ -118,7 +118,7 @@ async function request<T>(
  * this file: it is internal glue, the factory is fully typed, and the call sites read
  * the same either way.
  */
-interface Collection<Read, Create, Update> {
+export interface Collection<Read, Create, Update> {
   list(): Promise<Read[]>;
   create(body: Create): Promise<Read>;
   update(id: string, body: Update): Promise<Read>;

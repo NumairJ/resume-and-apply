@@ -168,9 +168,12 @@ export function ApplicationsTable({ rows }: { rows: Application[] }) {
                     >
                       {hostname(row.job_posting.source_url)}
                     </a>
+                    {/* Named with the company: "Delete" alone is ambiguous to anyone
+                        tabbing through the table, where every row has one. */}
                     <button
                       type="button"
                       onClick={() => setNotesFor(row)}
+                      aria-label={`Notes for ${row.job_posting.company}`}
                       className="text-faint hover:text-ink"
                     >
                       {row.notes ? "Notes ✓" : "Add notes"}
@@ -178,6 +181,7 @@ export function ApplicationsTable({ rows }: { rows: Application[] }) {
                     <button
                       type="button"
                       onClick={() => setDeleting(row)}
+                      aria-label={`Delete application for ${row.job_posting.company}`}
                       className="text-faint hover:text-negative"
                     >
                       Delete
