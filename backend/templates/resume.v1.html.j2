@@ -6,7 +6,16 @@
    implementations to keep in sync.
 
    Everything on `resume` is already factual — the server filled each field from profile
-   rows at assembly time — so this file only lays out; it never decides. #}
+   rows at assembly time — so this file only lays out; it never decides.
+
+   `density` is the one exception, and it isn't a decision either: `render.render()`
+   renders this template once per density step, loosest first, and keeps the first one
+   that comes to a single page. The numbers are interpolated straight into the stylesheet
+   rather than going through CSS custom properties, so nothing depends on how well
+   WeasyPrint supports `var()`.
+
+   Separators and spacing are chosen for ATS text extraction, not only for looks. See the
+   comments where they differ from what a purely visual design would pick. #}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -24,25 +33,32 @@
      backend image; the rest are for anyone running bare-metal. */
   body {
     font-family: "DejaVu Serif", Georgia, "Times New Roman", serif;
-    font-size: 10.5pt;
-    line-height: 1.4;
+    font-size: {{ density.font }}pt;
+    line-height: {{ density.line_height }};
     color: #1a1a1a;
     margin: 0;
   }
 
   h1, h2, h3 { margin: 0; font-weight: bold; }
 
-  header { margin-bottom: 14pt; }
-  header h1 { font-size: 20pt; letter-spacing: 0.4pt; }
-  .contact { margin-top: 4pt; font-size: 9.5pt; color: #444; }
-  .contact a { color: #444; text-decoration: none; }
+  header { margin-bottom: {{ density.section_gap }}pt; }
+  header h1 { font-size: {{ density.font * 1.9 }}pt; letter-spacing: 0.4pt; }
+  .contact { margin-top: 4pt; font-size: {{ density.small }}pt; color: #444; }
 
-  section { margin-bottom: 12pt; }
+  /* Every link, not just the contact line — a project URL left to the browser default
+     printed as blue underlined text, which is the one splash of colour on an otherwise
+     black-and-white page. The href is still there for anyone clicking the PDF. */
+  a { color: #444; text-decoration: none; }
+
+  section { margin-bottom: {{ density.section_gap }}pt; }
 
   h2 {
-    font-size: 11pt;
+    font-size: {{ density.font + 0.5 }}pt;
     text-transform: uppercase;
-    letter-spacing: 1pt;
+    /* 0.3pt, not the 1pt this looked better at. Wide tracking is the classic reason a
+       PDF text extractor reads a heading as "E X P E R I E N C E", and an ATS that
+       can't find the word "Experience" can't find the section under it. */
+    letter-spacing: 0.3pt;
     border-bottom: 0.75pt solid #999;
     padding-bottom: 2pt;
     margin-bottom: 7pt;
@@ -50,9 +66,9 @@
     break-after: avoid;
   }
 
-  /* Keep a job or a degree whole. Splitting an entry across a page boundary is the
-     single ugliest thing a generated resume can do. */
-  .entry { margin-bottom: 9pt; break-inside: avoid; }
+  /* Keep a job, a project or a degree whole. Splitting an entry across a page boundary
+     is the single ugliest thing a generated resume can do. */
+  .entry { margin-bottom: {{ density.entry_gap }}pt; break-inside: avoid; }
   .entry:last-child { margin-bottom: 0; }
 
   .entry-head {
@@ -60,28 +76,48 @@
     justify-content: space-between;
     align-items: baseline;
   }
-  .role { font-size: 11pt; }
+  .role { font-size: {{ density.font + 0.5 }}pt; }
   .company { font-weight: normal; }
-  .dates { font-size: 9.5pt; color: #555; white-space: nowrap; padding-left: 10pt; }
+  .dates {
+    font-size: {{ density.small }}pt;
+    color: #555;
+    white-space: nowrap;
+    padding-left: 10pt;
+  }
 
-  ul { margin: 4pt 0 0; padding-left: 15pt; }
-  li { margin-bottom: 2pt; }
+  ul { margin: 4pt 0 0; padding-left: 4pt; }
+
+  /* `inside`, with the indent rebuilt by hand, because of how the marker extracts.
+     With the default `outside` the bullet glyphs sit outside the line box and a text
+     extractor emits them after the whole list — the PDF's text came out as two bullet
+     lines followed by a bare "• • ". Inside, each marker extracts with its own line.
+     The negative text-indent restores the hanging indent that `outside` gave for free. */
+  li {
+    margin-bottom: 2pt;
+    list-style-position: inside;
+    text-indent: -9pt;
+    padding-left: 9pt;
+  }
 
   .summary { margin: 0; }
   .skills { margin: 0; }
+  .project-detail { margin: 2pt 0 0; }
 </style>
 </head>
 <body>
 
 <header>
   <h1>{{ resume.full_name }}</h1>
+  {# " | " rather than the middle dot this used, and the link's URL rather than only its
+     label. An ATS reads the visible text, not the href, so "GitHub" on its own threw the
+     address away entirely — the parser saw a word, not a profile. #}
   <div class="contact">
     {%- set details = [] -%}
     {%- if resume.email %}{% set _ = details.append(resume.email) %}{% endif -%}
     {%- if resume.phone %}{% set _ = details.append(resume.phone) %}{% endif -%}
     {%- if resume.location %}{% set _ = details.append(resume.location) %}{% endif -%}
-    {{ details | join(" · ") }}
-    {%- for link in resume.links %} · <a href="{{ link.url }}">{{ link.label }}</a>{% endfor -%}
+    {{ details | join(" | ") }}
+    {%- for link in resume.links %} | <a href="{{ link.url }}">{{ bare_url(link.url) }}</a>{% endfor -%}
   </div>
 </header>
 
@@ -98,8 +134,10 @@
   {% for experience in resume.experiences %}
   <div class="entry">
     <div class="entry-head">
+      {# Comma, not an em dash. "Title, Company" is the shape ATS parsers are written
+         against; an em dash is one more thing for them to guess at. #}
       <h3 class="role">
-        {{ experience.title }} <span class="company">— {{ experience.company }}</span>
+        {{ experience.title }}<span class="company">, {{ experience.company }}</span>
         {%- if experience.location %}<span class="company">, {{ experience.location }}</span>{% endif %}
       </h3>
       <span class="dates">{{ date_range(experience.start_date, experience.end_date) }}</span>
@@ -114,15 +152,36 @@
 </section>
 {% endif %}
 
+{# "Projects" is a heading ATS parsers recognise, so it earns its own section rather than
+   being folded into Experience. Between Experience and Education because a project is
+   work, and it should read next to the other work. #}
+{% if resume.projects %}
+<section>
+  <h2>Projects</h2>
+  {% for project in resume.projects %}
+  <div class="entry">
+    <div class="entry-head">
+      <h3 class="role">{{ project.name }}</h3>
+      <span class="dates">{{ date_range(project.start_date, project.end_date) }}</span>
+    </div>
+    {% if project.description %}<p class="project-detail">{{ project.description }}</p>{% endif %}
+    {% if project.url %}<p class="project-detail"><a href="{{ project.url }}">{{ bare_url(project.url) }}</a></p>{% endif %}
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+
 {% if resume.education %}
 <section>
   <h2>Education</h2>
   {% for entry in resume.education %}
   <div class="entry">
     <div class="entry-head">
+      {# Whitespace-controlled: without the trailing `-`, the newline before the span
+         became a real space and the PDF extracted "Computer Science , State University". #}
       <h3 class="role">
-        {{ entry.degree }}{% if entry.field_of_study %}, {{ entry.field_of_study }}{% endif %}
-        <span class="company">— {{ entry.school }}</span>
+        {{ entry.degree }}{% if entry.field_of_study %}, {{ entry.field_of_study }}{% endif -%}
+        <span class="company">, {{ entry.school }}</span>
       </h3>
       <span class="dates">{{ date_range(entry.start_date, entry.end_date) }}</span>
     </div>
@@ -134,7 +193,8 @@
 {% if resume.skills %}
 <section>
   <h2>Skills</h2>
-  <p class="skills">{{ resume.skills | join(" · ") }}</p>
+  {# Comma-separated, not middle-dot. Keyword extractors split on commas. #}
+  <p class="skills">{{ resume.skills | join(", ") }}</p>
 </section>
 {% endif %}
 

@@ -7,7 +7,12 @@ import pytest
 
 from models.application import JobPosting
 from models.enums import ExtractionMethod
-from schemas.resume import TailoredBullet, TailoredExperience, TailoredResume
+from schemas.resume import (
+    TailoredBullet,
+    TailoredExperience,
+    TailoredProject,
+    TailoredResume,
+)
 from services import tailoring
 from services.guardrails import GuardrailFailure
 from services.llm.fake import FakeLLMProvider
@@ -44,6 +49,23 @@ def test_prompt_labels_match_what_the_guardrails_resolve(profile) -> None:
     assert "[E2]" in rendered and "[E2B1]" in rendered
     # No E3: the profile has two experiences.
     assert "[E3]" not in rendered
+
+    assert "[P1]" in rendered and "[P2]" in rendered
+    assert "[P3]" not in rendered
+
+
+def test_projects_are_labelled_and_carry_their_description(profile) -> None:
+    """Before v2 projects were listed unlabelled, so the model could read about one and
+    had no way to put it on the resume — prompt cost with no possible output. The
+    description has to be here too: it is the source a rewrite must be traceable to.
+    """
+    rendered = tailoring.render_profile(profile)
+
+    assert "[P1] Portfolio Site: Personal site built with Next.js" in rendered
+    # P2 has no description recorded, and inventing a colon and nothing after it would
+    # read to the model as an empty one.
+    assert "[P2] Crossword Solver" in rendered
+    assert "[P2] Crossword Solver:" not in rendered
 
 
 def test_prompt_includes_the_posting_and_the_profile(profile, posting) -> None:
@@ -164,3 +186,100 @@ def test_bullet_order_follows_the_model_not_the_profile(profile) -> None:
     ]
     resume = tailoring.assemble(tailored, profile)
     assert resume.experiences[0].bullets[0].startswith("Migrated")
+
+
+# --- assembling projects ----------------------------------------------------
+
+
+def test_project_facts_come_from_the_profile_and_only_the_text_from_the_model(
+    profile,
+) -> None:
+    resume = tailoring.assemble(valid_resume(), profile)
+
+    project = resume.projects[0]
+    assert project.name == "Portfolio Site"
+    assert project.url == "https://dana.example/portfolio"
+    assert project.start_date == date(2022, 4, 1)
+    assert project.end_date == date(2022, 9, 1)
+    assert project.description.endswith("deployed as a single container")
+
+
+def test_an_unselected_project_stays_off_the_resume(profile) -> None:
+    """P2 exists in the profile and was not chosen. Projects are tailored, not appended
+    wholesale the way education is."""
+    resume = tailoring.assemble(valid_resume(), profile)
+    assert [p.name for p in resume.projects] == ["Portfolio Site"]
+
+
+def test_an_omitted_project_description_is_not_backfilled(profile) -> None:
+    """The model saw the profile's own wording and chose to leave it out. Reinstating it
+    would put untailored text on a tailored resume."""
+    tailored = valid_resume()
+    tailored.projects[0].text = ""
+
+    resume = tailoring.assemble(tailored, profile)
+    assert resume.projects[0].name == "Portfolio Site"
+    assert resume.projects[0].description is None
+
+
+def test_assembly_ignores_an_unresolvable_project_reference(profile) -> None:
+    tailored = valid_resume()
+    tailored.projects.append(TailoredProject(source="P9", text=""))
+
+    resume = tailoring.assemble(tailored, profile)
+    assert len(resume.projects) == 1
+
+
+# --- the one-page budget ----------------------------------------------------
+
+
+def test_selection_is_capped_at_what_fits_one_page(profile) -> None:
+    """The prompt asks for these limits; assembly is the backstop that makes them true.
+
+    Enforcing them as a guardrail instead would spend a whole extra generation to obtain
+    output the server can produce by slicing.
+    """
+    tailored = valid_resume()
+    tailored.experiences = [
+        TailoredExperience(
+            source="E1",
+            bullets=[
+                TailoredBullet(source="E1B1", text="Hardened the payment retry path")
+                for _ in range(9)
+            ],
+        )
+    ]
+    tailored.skills = ["Python"] * 30
+
+    resume = tailoring.assemble(tailored, profile)
+
+    assert len(resume.experiences[0].bullets) == tailoring.MAX_BULLETS
+    assert len(resume.skills) == tailoring.MAX_SKILLS
+
+
+def test_the_experience_and_project_caps_hold_too(profile) -> None:
+    """Separated because the fixture profile has only two of each, so exceeding these
+    caps needs repeated labels — which assembly resolves happily even though the
+    guardrails would have rejected them."""
+    tailored = valid_resume()
+    tailored.experiences = [TailoredExperience(source="E1", bullets=[])] * 9
+    tailored.projects = [TailoredProject(source="P1", text="")] * 9
+
+    resume = tailoring.assemble(tailored, profile)
+
+    assert len(resume.experiences) == tailoring.MAX_EXPERIENCES
+    assert len(resume.projects) == tailoring.MAX_PROJECTS
+
+
+def test_the_cap_keeps_what_the_model_ranked_highest(profile) -> None:
+    """Slicing is only defensible because the model was told to order by relevance —
+    so the first N are the most relevant N, not an arbitrary N."""
+    tailored = valid_resume()
+    tailored.experiences[0].bullets = [
+        TailoredBullet(source="E1B1", text=f"Hardened the payment retry path {n}")
+        for n in range(9)
+    ]
+
+    resume = tailoring.assemble(tailored, profile)
+    assert resume.experiences[0].bullets[0].endswith("0")
+    assert resume.experiences[0].bullets[-1].endswith(str(tailoring.MAX_BULLETS - 1))

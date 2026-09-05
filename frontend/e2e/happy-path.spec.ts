@@ -20,6 +20,7 @@ const BOARD = "stripe";
 // Recorded so teardown removes exactly what this test made, and nothing else.
 const created: {
   experienceId?: string;
+  projectId?: string;
   skillIds: string[];
   /** The row the backend created, captured from the extract response — see below. */
   jobPostingId?: string;
@@ -81,6 +82,24 @@ async function seedProfile(api: APIRequestContext) {
   expect(experience.ok(), await experience.text()).toBeTruthy();
   created.experienceId = (await experience.json()).id;
 
+  // A project too, so the run actually exercises the P-label path: the model has to
+  // cite `P1` and rewrite this description, and the server has to fill the name, URL and
+  // dates from this row. Without one seeded, the model cites no project and the whole
+  // Projects section would go untested by the only test that talks to a real model.
+  const project = await api.post("/api/profile/projects", {
+    data: {
+      name: "Ledger Reconciler",
+      description:
+        "Open-source tool that reconciles double-entry ledgers against bank exports, written in Python with a Postgres store",
+      url: "https://github.com/example/ledger-reconciler",
+      start_date: "2023-01-01",
+      end_date: "2023-08-01",
+      position: 0,
+    },
+  });
+  expect(project.ok(), await project.text()).toBeTruthy();
+  created.projectId = (await project.json()).id;
+
   for (const [index, name] of ["Python", "Postgres", "Go"].entries()) {
     const skill = await api.post("/api/profile/skills", {
       data: { name, category: null, position: index },
@@ -110,6 +129,7 @@ async function teardown(api: APIRequestContext) {
   if (application) await api.delete(`/api/applications/${application.id}`);
 
   for (const id of created.skillIds) await api.delete(`/api/profile/skills/${id}`);
+  if (created.projectId) await api.delete(`/api/profile/projects/${created.projectId}`);
   if (created.experienceId) {
     await api.delete(`/api/profile/experiences/${created.experienceId}`);
   }
@@ -177,6 +197,23 @@ test("paste a posting, generate a resume, track it, download the PDF", async ({
   await expect(
     preview.contentFrame().getByText("Northwind Systems"),
   ).toBeVisible();
+
+  // The seeded project, with its name and URL taken from the profile row rather than
+  // written by the model — the whole point of the P-label scheme.
+  await expect(
+    preview.contentFrame().getByRole("heading", { name: "Ledger Reconciler" }),
+  ).toBeVisible();
+  await expect(
+    preview.contentFrame().getByText("github.com/example/ledger-reconciler"),
+  ).toBeVisible();
+
+  await expect(
+    preview.contentFrame().getByRole("heading", { name: "Projects" }),
+  ).toBeVisible();
+
+  // Not asserted here: that the PDF is one page. The iframe holds the unpaginated HTML,
+  // so page count is not observable from the browser — `test_render.py` measures it on
+  // the laid-out document instead, which is where it can actually be seen.
 
   // --- save, by marking it applied -----------------------------------------
   await page.getByRole("button", { name: "Mark as applied" }).click();

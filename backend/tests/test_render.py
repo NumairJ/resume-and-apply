@@ -6,9 +6,15 @@ and a mocked renderer would prove only that the mock was called.
 
 import hashlib
 import uuid
+from datetime import date
 from pathlib import Path
 
-from schemas.resume import Resume, ResumeEducation, ResumeExperience
+from schemas.resume import (
+    Resume,
+    ResumeEducation,
+    ResumeExperience,
+    ResumeProject,
+)
 from services import render
 from services.tailoring import assemble
 from tests.factories import sample_profile, valid_resume
@@ -28,7 +34,7 @@ def test_html_carries_the_resume_facts() -> None:
     assert "Dana Reed" in html
     assert "Northwind Systems" in html
     assert "Software Engineer" in html
-    assert "Mar 2021 – Jun 2024" in html
+    assert "Mar 2021 - Jun 2024" in html
     assert "State University" in html
     assert "Migrated the billing database to Postgres with zero downtime" in html
 
@@ -36,16 +42,26 @@ def test_html_carries_the_resume_facts() -> None:
 def test_an_open_ended_role_reads_as_present() -> None:
     resume = a_resume()
     resume.experiences[0].end_date = None
-    assert "Mar 2021 – Present" in render.render_html(resume)
+    assert "Mar 2021 - Present" in render.render_html(resume)
 
 
 def test_a_date_range_missing_its_start_has_no_dangling_separator() -> None:
-    """Education start dates are nullable; " – May 2019" would read as a bug."""
-    resume = a_resume()
-    resume.education = [
-        ResumeEducation(school="State University", degree="BSc", end_date=None)
-    ]
-    assert "–" not in render.render_html(resume).split("Education")[1]
+    """Education start dates are nullable; " - May 2019" would read as a bug.
+
+    Asserted on `_date_range` directly. Going through the HTML made this vacuous: the row
+    it built had *neither* date, so the range was the empty string and a dangling
+    separator could never have appeared however broken the formatter was.
+    """
+    assert render._date_range(None, date(2019, 5, 1)) == "May 2019"
+    assert render._date_range(None, None) == ""
+
+
+def test_dates_use_a_plain_hyphen() -> None:
+    """An en dash is one more character for a resume date parser to get wrong."""
+    assert render._date_range(date(2021, 3, 1), date(2024, 6, 1)) == (
+        "Mar 2021 - Jun 2024"
+    )
+    assert "–" not in render.render_html(a_resume())
 
 
 def test_profile_text_is_escaped() -> None:
@@ -79,6 +95,148 @@ def test_print_stylesheet_survives() -> None:
     assert "break-inside: avoid" in html
 
 
+# --- projects ---------------------------------------------------------------
+
+
+def test_projects_reach_the_page() -> None:
+    """The gap this whole change exists to close: projects rendered nowhere."""
+    html = render.render_html(a_resume())
+
+    assert "<h2>Projects</h2>" in html
+    assert "Portfolio Site" in html
+    # The model's rewrite, not the profile's own wording.
+    assert "deployed as a single container" in html
+    assert "dana.example/portfolio" in html
+    assert "Apr 2022 - Sep 2022" in html
+
+
+def test_a_project_without_a_description_still_renders() -> None:
+    """Name and dates are the whole record for some projects, and that is a resume
+    entry — not a reason to drop it."""
+    resume = a_resume()
+    resume.projects = [ResumeProject(name="Portfolio Site", description=None, url=None)]
+    html = render.render_html(resume)
+
+    assert "Portfolio Site" in html
+    assert "None" not in html.split("Projects")[1].split("Education")[0]
+
+
+def test_project_text_is_escaped() -> None:
+    resume = a_resume()
+    resume.projects = [
+        ResumeProject(name="Smith & Co", description="<script>alert(1)</script>")
+    ]
+    html = render.render_html(resume)
+
+    assert "<script>alert(1)</script>" not in html
+    assert "Smith &amp; Co" in html
+
+
+# --- ATS legibility ---------------------------------------------------------
+
+
+def test_a_link_shows_its_address_not_only_its_label() -> None:
+    """A text extractor reads visible text, never the href. "GitHub" alone threw the
+    address away — the parser saw a word, not a profile."""
+    html = render.render_html(a_resume())
+    assert "gh/dana" in html
+
+
+def test_skills_are_comma_separated() -> None:
+    """Keyword extractors split on commas; a middle dot is a character to guess at."""
+    html = render.render_html(a_resume())
+    assert "Python, Postgres" in html
+
+
+def test_headings_are_not_widely_tracked() -> None:
+    """1pt tracking is the classic reason an extractor reads "E X P E R I E N C E"."""
+    assert "letter-spacing: 1pt" not in render.render_html(a_resume())
+
+
+def test_bullet_markers_are_inside_the_line_box() -> None:
+    """Found by extracting the PDF's text and reading it.
+
+    With the default `list-style-position: outside`, WeasyPrint puts the bullet glyphs
+    outside the line box and an extractor emits them *after* the entire list — the text
+    came out as the two bullet lines followed by a bare "• • ". Nothing on screen shows
+    this; only reading the extracted text does.
+    """
+    assert "list-style-position: inside" in render.render_html(a_resume())
+
+
+def test_no_space_before_the_comma_in_an_education_line() -> None:
+    """Also found by extraction: "BSc, Computer Science , State University".
+
+    Jinja turned the newline before the school's span into a real space. Invisible in the
+    browser, which collapses it against the comma; not invisible to a parser.
+    """
+    education = render.render_html(a_resume()).split("Education")[1]
+    assert " , " not in education
+
+
+def test_the_pdf_is_tagged() -> None:
+    """pdf/ua-1 gives the PDF a structure tree, so headings extract as headings.
+
+    Checked on an uncompressed render: the default output packs these objects into
+    compressed streams, where grepping for the marker finds nothing and proves nothing.
+    """
+    _, document = render.fit(a_resume())
+    pdf = document.write_pdf(pdf_variant="pdf/ua-1", uncompressed_pdf=True)
+
+    assert b"StructTreeRoot" in pdf
+    assert b"/Marked" in pdf
+
+
+# --- fitting to one page ----------------------------------------------------
+
+
+def test_a_budgeted_resume_fits_one_page_at_full_size() -> None:
+    """The selection caps do the shortening; the ladder should not need to be climbed."""
+    html, document = render.fit(a_resume())
+
+    assert len(document.pages) == 1
+    assert f"font-size: {render.DENSITIES[0].font}pt" in html
+
+
+def test_an_oversized_resume_is_tightened_rather_than_truncated() -> None:
+    """Far more content than the caps would ever allow. Every bullet must survive."""
+    resume = a_resume()
+    resume.experiences = [
+        ResumeExperience(
+            company=f"Company {index}",
+            title="Software Engineer",
+            start_date=date(2015, 1, 1),
+            end_date=date(2020, 1, 1),
+            bullets=[f"Did a substantial and quite wordy thing number {n}" for n in range(6)],
+        )
+        for index in range(6)
+    ]
+    html, document = render.fit(resume)
+
+    assert f"font-size: {render.DENSITIES[0].font}pt" not in html
+    for index in range(6):
+        assert f"Company {index}" in html
+
+
+def test_content_is_never_dropped_to_fit() -> None:
+    """Past the floor a second page is the right answer. Deleting a bullet the user
+    wrote is not, so this pins that nothing is silently lost."""
+    resume = a_resume()
+    resume.experiences = [
+        ResumeExperience(
+            company=f"Company {index}",
+            title="Software Engineer",
+            start_date=date(2015, 1, 1),
+            bullets=["A deliberately long bullet " * 12] * 8,
+        )
+        for index in range(12)
+    ]
+    html, _ = render.fit(resume)
+
+    for index in range(12):
+        assert f"Company {index}" in html
+
+
 # --- files ------------------------------------------------------------------
 
 
@@ -96,6 +254,28 @@ def test_the_stored_html_is_what_the_pdf_was_made_from() -> None:
     resume = a_resume()
     result = render.render(resume, uuid.uuid4())
     assert result.html_path.read_text(encoding="utf-8") == render.render_html(resume)
+
+
+def test_the_stored_html_is_the_density_the_pdf_was_made_at() -> None:
+    """The fit loop is where preview and download could most easily drift apart: the
+    HTML written must be the rung that was measured, not a fresh render at the default.
+    """
+    resume = a_resume()
+    resume.experiences = [
+        ResumeExperience(
+            company=f"Company {index}",
+            title="Software Engineer",
+            start_date=date(2015, 1, 1),
+            bullets=[f"Did a substantial and quite wordy thing number {n}" for n in range(6)],
+        )
+        for index in range(6)
+    ]
+    result = render.render(resume, uuid.uuid4())
+    fitted, _ = render.fit(resume)
+
+    stored = result.html_path.read_text(encoding="utf-8")
+    assert stored == fitted
+    assert stored != render.render_html(resume)  # i.e. not the default density
 
 
 def test_the_pdf_is_a_pdf() -> None:

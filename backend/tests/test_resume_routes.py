@@ -17,8 +17,13 @@ from repositories.application import (
     JobPostingRepository,
     ResumeRepository,
 )
-from repositories.profile import ExperienceBulletRepository, ExperienceRepository, SkillRepository
-from services import render
+from repositories.profile import (
+    ExperienceBulletRepository,
+    ExperienceRepository,
+    ProjectRepository,
+    SkillRepository,
+)
+from services import render, tailoring
 from services.llm.anthropic_provider import DEFAULT_MODEL
 from services.llm.base import LLMError
 from services.llm.fake import FakeLLMProvider
@@ -85,6 +90,21 @@ def seeded(session: Session, user: User) -> dict:
     skills.create(user_id=user.id, name="Python", category="Languages", position=0)
     skills.create(user_id=user.id, name="Postgres", category="Databases", position=1)
 
+    projects = ProjectRepository(session)
+    projects.create(
+        user_id=user.id,
+        name="Portfolio Site",
+        description=(
+            "Personal site built with Next.js and a typed API layer, "
+            "deployed on a single container"
+        ),
+        url="https://dana.example/portfolio",
+        start_date=date(2022, 4, 1),
+        end_date=date(2022, 9, 1),
+        position=0,
+    )
+    projects.create(user_id=user.id, name="Crossword Solver", position=1)
+
     posting = JobPostingRepository(session).create(**POSTING)
     session.commit()
     return {"posting_id": str(posting.id)}
@@ -131,7 +151,9 @@ def test_generate_returns_resume_and_rationale(client: TestClient, seeded: dict)
 
     assert body["rationale"]
     assert body["attempts"] == 1
-    assert body["prompt_version"] == "tailor_resume.v1"
+    # The version in force, not a literal: what matters is that the response reports the
+    # prompt the resume was actually made with, so a bump doesn't make this a lie.
+    assert body["prompt_version"] == tailoring.PROMPT_VERSION
 
     resume = body["resume"]
     assert resume["full_name"] == "Dana Reed"
@@ -139,6 +161,20 @@ def test_generate_returns_resume_and_rationale(client: TestClient, seeded: dict)
     assert resume["experiences"][0]["company"] == "Northwind Systems"
     assert resume["experiences"][0]["start_date"] == "2021-03-01"
     assert resume["skills"] == ["Python", "Postgres"]
+
+
+def test_generate_returns_projects_resolved_from_the_database(
+    client: TestClient, seeded: dict
+) -> None:
+    """End to end for the whole point of this change: the model cited P1, and every
+    factual field came back from the row rather than from the model."""
+    project = generate(client, seeded)["resume"]["projects"][0]
+
+    assert project["name"] == "Portfolio Site"
+    assert project["url"] == "https://dana.example/portfolio"
+    assert project["start_date"] == "2022-04-01"
+    # Only the description is the model's.
+    assert project["description"].endswith("deployed as a single container")
 
 
 def test_generate_sends_the_posting_into_the_prompt(
@@ -150,6 +186,7 @@ def test_generate_sends_the_posting_into_the_prompt(
     )
     assert "Globex" in provider.prompts[0]
     assert "[E1B1]" in provider.prompts[0]
+    assert "[P1]" in provider.prompts[0]
 
 
 def test_guardrail_failure_is_422_naming_the_violations(
@@ -240,7 +277,7 @@ def test_generate_writes_a_row_and_both_files(
     assert row is not None
     assert row.application_id == uuid.UUID(body["application_id"])
     assert row.provider == "fake"
-    assert row.prompt_version == "tailor_resume.v1"
+    assert row.prompt_version == tailoring.PROMPT_VERSION
 
     assert (resume_dir / f"{resume_id}.pdf").is_file()
     assert (resume_dir / f"{resume_id}.html").is_file()

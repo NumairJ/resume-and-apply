@@ -8,6 +8,7 @@ from services.guardrails.references import (
     ProfileIndex,
     bullet_label,
     experience_label,
+    project_label,
 )
 
 
@@ -34,5 +35,6 @@ __all__ = [
     "bullet_label",
     "experience_label",
     "overlap_ratio",
+    "project_label",
     "run_all",
 ]

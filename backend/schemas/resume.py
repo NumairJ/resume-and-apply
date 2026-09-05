@@ -33,6 +33,19 @@ class TailoredExperience(BaseModel):
     bullets: list[TailoredBullet] = []
 
 
+class TailoredProject(BaseModel):
+    """A project selected by label, with its description rewritten for the posting.
+
+    `text` defaults to empty because a profile project may have no description at all.
+    There would then be nothing to rewrite *from*, and writing one anyway is exactly the
+    fabrication this schema exists to prevent — so in that case the guardrails require
+    this to stay empty and the project appears as a bare name and date.
+    """
+
+    source: str = Field(description="Label of the project, e.g. P1")
+    text: str = Field(default="", description="The rewritten description")
+
+
 class TailoredResume(BaseModel):
     """Labels rather than UUIDs on purpose.
 
@@ -49,6 +62,7 @@ class TailoredResume(BaseModel):
     )
     summary: str = Field(description="A short professional summary for this posting")
     experiences: list[TailoredExperience] = []
+    projects: list[TailoredProject] = []
     skills: list[str] = Field(
         default=[], description="Skills to feature, copied exactly from the profile"
     )
@@ -74,6 +88,14 @@ class ResumeEducation(BaseModel):
     end_date: date | None = None
 
 
+class ResumeProject(BaseModel):
+    name: str
+    url: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    description: str | None = None
+
+
 class ResumeLink(BaseModel):
     label: str
     url: str
@@ -88,6 +110,7 @@ class Resume(BaseModel):
     location: str | None = None
     summary: str
     experiences: list[ResumeExperience] = []
+    projects: list[ResumeProject] = []
     education: list[ResumeEducation] = []
     skills: list[str] = []
     links: list[ResumeLink] = []

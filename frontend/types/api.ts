@@ -233,6 +233,15 @@ export interface ResumeEducation {
   end_date: string | null;
 }
 
+export interface ResumeProject {
+  name: string;
+  url: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  /** The model's rewrite, or null when the profile records no description to rewrite. */
+  description: string | null;
+}
+
 export interface ResumeLink {
   label: string;
   url: string;
@@ -246,6 +255,7 @@ export interface GeneratedResume {
   location: string | null;
   summary: string;
   experiences: ResumeExperience[];
+  projects: ResumeProject[];
   education: ResumeEducation[];
   skills: string[];
   links: ResumeLink[];

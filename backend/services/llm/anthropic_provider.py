@@ -8,6 +8,18 @@ from services.llm.base import LLMError, LLMProvider, ResponseT
 # fails those checks more often, and every failure costs another generation.
 DEFAULT_MODEL = "claude-sonnet-5"
 
+# Output tokens bill at roughly five times input, and with adaptive thinking the effort
+# level is the largest single lever on how many of them a generation spends. Dropped from
+# "high" to "medium": tailoring is selection and rephrasing against an explicit rule list,
+# not open-ended reasoning, and the rules the model must satisfy are checked afterwards by
+# the guardrail chain rather than trusted. Raise it again if rejected first attempts start
+# outnumbering clean ones — a retry costs a whole extra generation and would undo the
+# saving several times over.
+EFFORT = "medium"
+
+# Not a cost: a ceiling. It bounds a runaway response, and is never itself billed.
+MAX_TOKENS = 16000
+
 
 class AnthropicProvider(LLMProvider):
     """Structured generation through the Anthropic API.
@@ -45,9 +57,9 @@ class AnthropicProvider(LLMProvider):
         try:
             response = self._client.beta.messages.parse(
                 model=self.model,
-                max_tokens=16000,
+                max_tokens=MAX_TOKENS,
                 thinking={"type": "adaptive"},
-                output_config={"effort": "high"},
+                output_config={"effort": EFFORT},
                 messages=[{"role": "user", "content": prompt}],
                 output_format=response_model,
             )

@@ -9,7 +9,12 @@ rejected everything would produce an identically green run while being useless.
 import pytest
 
 from schemas.profile import Profile
-from schemas.resume import TailoredBullet, TailoredExperience, TailoredResume
+from schemas.resume import (
+    TailoredBullet,
+    TailoredExperience,
+    TailoredProject,
+    TailoredResume,
+)
 from services import guardrails
 from services.guardrails import overlap_ratio
 from tests.factories import valid_resume
@@ -152,6 +157,91 @@ def test_duplicated_experience_is_rejected(profile: Profile) -> None:
     resume.experiences.append(TailoredExperience(source="E1", bullets=[]))
     violations = guardrails.run_all(resume, profile)
     assert any(v.check == "references" and "more than once" in v.message for v in violations)
+
+
+# --- projects ---------------------------------------------------------------
+#
+# Projects reach the resume the same way experiences do — by label, with every factual
+# field filled from the row — so they need the same rejections proved against them.
+
+
+def test_invented_project_is_rejected(profile: Profile) -> None:
+    """The model cannot write a project name, so citing one that isn't there is how an
+    invented project would have to appear."""
+    resume = valid_resume()
+    resume.projects.append(TailoredProject(source="P9", text="A thing I never built"))
+    violations = guardrails.run_all(resume, profile)
+    assert any(v.check == "references" and "P9" in v.message for v in violations)
+
+
+def test_duplicated_project_is_rejected(profile: Profile) -> None:
+    resume = valid_resume()
+    resume.projects.append(TailoredProject(source="P1", text=""))
+    violations = guardrails.run_all(resume, profile)
+    assert any(
+        v.check == "references" and "P1" in v.message and "more than once" in v.message
+        for v in violations
+    )
+
+
+def test_untraceable_project_rewrite_is_rejected(profile: Profile) -> None:
+    """Same bargain as a bullet: a rewrite must still be its original."""
+    resume = valid_resume()
+    resume.projects[0].text = "Led a distributed team building trading infrastructure"
+    violations = guardrails.run_all(resume, profile)
+    assert any(v.check == "traceability" and "P1" in v.message for v in violations)
+
+
+def test_description_written_for_a_project_that_has_none_is_rejected(
+    profile: Profile,
+) -> None:
+    """P2 in the fixture profile is a bare name. Text for it is not a rephrasing of
+    anything — there is no source — so it is invention by definition."""
+    resume = valid_resume()
+    resume.projects.append(
+        TailoredProject(source="P2", text="A fast solver written in Rust")
+    )
+    violations = guardrails.run_all(resume, profile)
+    assert any(
+        v.check == "traceability" and "P2" in v.message and "nothing to rewrite" in v.message
+        for v in violations
+    )
+
+
+def test_a_project_with_no_description_may_still_be_selected(profile: Profile) -> None:
+    """The name and dates are real profile facts. Requiring a description would drop a
+    legitimate entry for having been recorded tersely."""
+    resume = valid_resume()
+    resume.projects.append(TailoredProject(source="P2", text=""))
+    assert guardrails.run_all(resume, profile) == []
+
+
+def test_dropping_a_project_description_entirely_passes(profile: Profile) -> None:
+    """Omission is always allowed. Only writing something new is not."""
+    resume = valid_resume()
+    resume.projects[0].text = ""
+    assert guardrails.run_all(resume, profile) == []
+
+
+def test_project_text_is_covered_by_the_fabrication_check(profile: Profile) -> None:
+    """Project descriptions are free text, so they get the same net as bullets."""
+    resume = valid_resume()
+    resume.projects[0].text = (
+        "Personal site built with Next.js and a typed API layer, deployed on "
+        "Northwind Cloud"
+    )
+    violations = guardrails.run_all(resume, profile)
+    assert any(v.check == "fabrication" and "Northwind Cloud" in v.message for v in violations)
+
+
+def test_project_text_is_covered_by_the_style_check(profile: Profile) -> None:
+    resume = valid_resume()
+    resume.projects[0].text = (
+        "Personal site built with Next.js and a typed API layer, a testament to "
+        "deployment"
+    )
+    violations = guardrails.run_all(resume, profile)
+    assert any(v.check == "style" and "P1" in v.message for v in violations)
 
 
 # --- style ------------------------------------------------------------------

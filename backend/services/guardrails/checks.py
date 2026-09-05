@@ -89,6 +89,7 @@ def run_all(
     for check in (
         check_references,
         check_bullet_traceability,
+        check_project_traceability,
         check_skills,
         check_dates,
     ):
@@ -143,6 +144,26 @@ def check_references(resume: TailoredResume, index: ProfileIndex) -> list[Violat
                         f"than {experience.source!r}",
                     )
                 )
+
+    seen_projects: set[str] = set()
+    for project in resume.projects:
+        if index.project(project.source) is None:
+            violations.append(
+                Violation(
+                    "references",
+                    f"project {project.source!r} is not in the profile",
+                )
+            )
+            continue
+        if project.source in seen_projects:
+            violations.append(
+                Violation(
+                    "references",
+                    f"project {project.source!r} appears more than once",
+                )
+            )
+        seen_projects.add(project.source)
+
     return violations
 
 
@@ -175,6 +196,53 @@ def check_bullet_traceability(
     return violations
 
 
+def check_project_traceability(
+    resume: TailoredResume, index: ProfileIndex
+) -> list[Violation]:
+    """The same bargain as bullets: a rewrite must still be its original.
+
+    With one extra rule that bullets don't need. A project row may legitimately have no
+    description — the name and dates are the whole record — and there is then nothing to
+    rewrite *from*. Text produced in that case is not a rephrasing of anything, it is
+    invention, so it has to be empty. The project still appears; it just appears as the
+    bare facts the profile actually holds.
+    """
+    violations = []
+    for project in resume.projects:
+        source = index.project(project.source)
+        if source is None:
+            continue  # already reported by check_references
+
+        rewrite = project.text.strip()
+        original = (source.description or "").strip()
+
+        if not original:
+            if rewrite:
+                violations.append(
+                    Violation(
+                        "traceability",
+                        f"project {project.source!r} has no description recorded in the "
+                        f"profile, so there is nothing to rewrite. Leave its text empty.",
+                    )
+                )
+            continue
+
+        if not rewrite:
+            continue  # dropping the description loses nothing that wasn't the user's
+
+        ratio = overlap_ratio(rewrite, original)
+        if ratio < MIN_BULLET_OVERLAP:
+            violations.append(
+                Violation(
+                    "traceability",
+                    f"project {project.source!r} keeps only {ratio:.0%} of its source "
+                    f"wording (minimum {MIN_BULLET_OVERLAP:.0%}). Rewrite the original "
+                    f"rather than writing a new claim. Original: {original!r}",
+                )
+            )
+    return violations
+
+
 def check_skills(resume: TailoredResume, index: ProfileIndex) -> list[Violation]:
     """A set-membership test, not a judgement call."""
     return [
@@ -198,10 +266,11 @@ def check_dates(resume: TailoredResume, index: ProfileIndex) -> list[Violation]:
     2021-2024 is a shifted date, even though 2015 is a real year elsewhere in the
     profile (a degree, say). Checking against the whole profile would wave it through.
 
-    The summary and rationale have no such context, so they are checked against every
-    year the profile contains. **A shifted date in the summary that happens to land on
-    another real profile year is not caught** — a known limit of a context-free set
-    membership test, and the reason the bullet-level check is scoped tighter.
+    The summary, the rationale and project descriptions have no such context, so they are
+    checked against every year the profile contains. **A shifted date in the summary that
+    happens to land on another real profile year is not caught** — a known limit of a
+    context-free set membership test, and the reason the bullet-level check is scoped
+    tighter.
     """
     violations = []
     this_year = date.today().year
@@ -318,6 +387,11 @@ def _free_text(resume: TailoredResume) -> list[tuple[str, str]]:
         for experience in resume.experiences
         for bullet in experience.bullets
     ]
+    texts += [
+        (f"project {project.source}", project.text)
+        for project in resume.projects
+        if project.text
+    ]
     return texts
 
 
@@ -340,4 +414,15 @@ def _dated_text(
             (f"bullet {bullet.source}", bullet.text, allowed)
             for bullet in experience.bullets
         ]
+
+    # Project text gets the summary's treatment — every year the profile contains —
+    # rather than a per-project range. Project rows very often carry no dates at all, and
+    # a range built from two NULLs would reject every year the description mentions,
+    # including the correct one. Same known limit as the summary: a shifted date that
+    # happens to land on another real profile year is not caught.
+    items += [
+        (f"project {project.source}", project.text, everywhere)
+        for project in resume.projects
+        if project.text
+    ]
     return items

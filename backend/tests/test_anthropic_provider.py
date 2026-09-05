@@ -62,6 +62,20 @@ def test_request_carries_the_expected_parameters() -> None:
     assert recorded["messages"] == [{"role": "user", "content": "a prompt"}]
 
 
+def test_effort_and_max_tokens_are_pinned() -> None:
+    """Both were previously unasserted, so either could change without a test noticing.
+
+    Effort is the largest single lever on output tokens under adaptive thinking, and
+    output bills at roughly five times input — a silent move back to "high" would be an
+    invisible cost regression, which is exactly the kind a test should catch.
+    """
+    provider, recorded = provider_with(parsed())
+    provider.generate_structured("a prompt", Answer)
+
+    assert recorded["output_config"] == {"effort": "medium"}
+    assert recorded["max_tokens"] == 16000
+
+
 @pytest.mark.parametrize(
     "model", ["claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5"]
 )

@@ -11,19 +11,36 @@ from schemas.resume import (
     ResumeEducation,
     ResumeExperience,
     ResumeLink,
+    ResumeProject,
     TailoredResume,
 )
 from services import guardrails
-from services.guardrails import Violation, bullet_label, experience_label
+from services.guardrails import (
+    Violation,
+    bullet_label,
+    experience_label,
+    project_label,
+)
 from services.guardrails.references import ProfileIndex
 from services.llm.base import LLMProvider
 
-PROMPT_VERSION = "tailor_resume.v1"
+PROMPT_VERSION = "tailor_resume.v2"
 PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / f"{PROMPT_VERSION}.md"
 
 # One initial attempt plus this many retries. Named rather than inlined because "up to
 # two attempts" is ambiguous about whether the first one counts.
 MAX_RETRIES = 2
+
+# What fits on one page. The prompt states these limits and `assemble` enforces them by
+# slicing, which is deliberate: they are a *budget*, not a correctness property, so
+# rejecting an over-long draft would spend a whole extra API call to obtain output the
+# server can produce itself. The model is told to order by relevance, so taking the first
+# N takes the most relevant N. The density fit-loop in `render` handles the slack left
+# over; these caps are what keep that loop from having to shrink the type to fit.
+MAX_EXPERIENCES = 4
+MAX_BULLETS = 4
+MAX_PROJECTS = 3
+MAX_SKILLS = 14
 
 
 @dataclass
@@ -151,10 +168,13 @@ def render_profile(profile: Profile) -> str:
             lines.append(f"  {entry.degree}{field} — {entry.school}")
 
     if profile.projects:
+        # Labelled, like experiences. Before v2 these were listed unlabelled, which meant
+        # the model could read about a project and had no way to put one on the resume —
+        # they were prompt cost with no possible output.
         lines.append("\n## Projects")
-        for project in profile.projects:
-            summary = f": {project.description}" if project.description else ""
-            lines.append(f"  {project.name}{summary}")
+        for position, project in enumerate(profile.projects):
+            description = f": {project.description}" if project.description else ""
+            lines.append(f"  [{project_label(position)}] {project.name}{description}")
 
     return "\n".join(lines)
 
@@ -163,13 +183,17 @@ def assemble(tailored: TailoredResume, profile: Profile) -> Resume:
     """Fill every factual field from the profile rows the labels resolved to.
 
     Nothing factual here comes from the model — it chose *which* rows, and rewrote
-    bullet text. That is why an invented employer is impossible rather than merely
-    detectable.
+    bullet and project text. That is why an invented employer is impossible rather than
+    merely detectable.
+
+    This is also where the one-page budget is enforced, by slicing. The model was asked
+    for the same limits and ordered its output by relevance, so the slice keeps what it
+    ranked highest.
     """
     index = ProfileIndex(profile)
 
     experiences = []
-    for selected in tailored.experiences:
+    for selected in tailored.experiences[:MAX_EXPERIENCES]:
         source = index.experience(selected.source)
         if source is None:
             continue  # guardrails already rejected this; belt and braces
@@ -180,7 +204,26 @@ def assemble(tailored: TailoredResume, profile: Profile) -> Resume:
                 location=source.location,
                 start_date=source.start_date,
                 end_date=source.end_date,
-                bullets=[bullet.text for bullet in selected.bullets],
+                bullets=[bullet.text for bullet in selected.bullets[:MAX_BULLETS]],
+            )
+        )
+
+    projects = []
+    for chosen in tailored.projects[:MAX_PROJECTS]:
+        source = index.project(chosen.source)
+        if source is None:
+            continue
+        projects.append(
+            ResumeProject(
+                name=source.name,
+                url=source.url,
+                start_date=source.start_date,
+                end_date=source.end_date,
+                # The rewrite when there is one, nothing when there isn't. The profile's
+                # own description is not a fallback: the model was shown it and chose to
+                # leave it out, and quietly reinstating it would put untailored text on a
+                # tailored resume.
+                description=chosen.text.strip() or None,
             )
         )
 
@@ -191,6 +234,7 @@ def assemble(tailored: TailoredResume, profile: Profile) -> Resume:
         location=profile.location,
         summary=tailored.summary,
         experiences=experiences,
+        projects=projects,
         education=[
             ResumeEducation(
                 school=entry.school,
@@ -201,7 +245,7 @@ def assemble(tailored: TailoredResume, profile: Profile) -> Resume:
             )
             for entry in profile.education
         ],
-        skills=list(tailored.skills),
+        skills=list(tailored.skills[:MAX_SKILLS]),
         links=[ResumeLink(label=link.label, url=link.url) for link in profile.links],
     )
 

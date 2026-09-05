@@ -16,7 +16,12 @@ from schemas.profile import (
     ProjectRead,
     SkillRead,
 )
-from schemas.resume import TailoredBullet, TailoredExperience, TailoredResume
+from schemas.resume import (
+    TailoredBullet,
+    TailoredExperience,
+    TailoredProject,
+    TailoredResume,
+)
 
 
 def _uuid() -> uuid.UUID:
@@ -91,7 +96,23 @@ def sample_profile() -> Profile:
             SkillRead(id=_uuid(), name="Python", category="Languages", position=0),
             SkillRead(id=_uuid(), name="Postgres", category="Databases", position=1),
         ],
-        projects=[ProjectRead(id=_uuid(), name="Portfolio Site", position=0)],
+        projects=[
+            ProjectRead(
+                id=_uuid(),
+                name="Portfolio Site",
+                description=(
+                    "Personal site built with Next.js and a typed API layer, "
+                    "deployed on a single container"
+                ),
+                url="https://dana.example/portfolio",
+                start_date=date(2022, 4, 1),
+                end_date=date(2022, 9, 1),
+                position=0,
+            ),
+            # No description on purpose: the guardrails have to distinguish "nothing to
+            # rewrite" from "rewrote it badly", and only a row like this exercises that.
+            ProjectRead(id=_uuid(), name="Crossword Solver", position=1),
+        ],
         links=[LinkRead(id=_uuid(), label="GitHub", url="https://gh/dana", position=0)],
     )
 
@@ -123,6 +144,15 @@ def valid_resume() -> TailoredResume:
                         ),
                     ),
                 ],
+            )
+        ],
+        projects=[
+            TailoredProject(
+                source="P1",
+                text=(
+                    "Personal site built with Next.js and a typed API layer, "
+                    "deployed as a single container"
+                ),
             )
         ],
         skills=["Python", "Postgres"],

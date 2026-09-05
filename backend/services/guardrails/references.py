@@ -7,6 +7,7 @@ like fabrication.
 
     E1      the first experience
     E1B2    the second bullet of the first experience
+    P1      the first project
 
 Labels are 1-based because they appear in a prompt, and a model reading "E0" as the
 first item is an avoidable stumble.
@@ -16,7 +17,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date
 
-from schemas.profile import ExperienceRead, Profile
+from schemas.profile import ExperienceRead, Profile, ProjectRead
 
 _WORD = re.compile(r"[a-z0-9]+")
 
@@ -29,6 +30,10 @@ def bullet_label(experience_index: int, bullet_index: int) -> str:
     return f"{experience_label(experience_index)}B{bullet_index + 1}"
 
 
+def project_label(index: int) -> str:
+    return f"P{index + 1}"
+
+
 @dataclass
 class ProfileIndex:
     """Everything the checks need to answer "is this in the profile?" quickly."""
@@ -36,6 +41,7 @@ class ProfileIndex:
     profile: Profile
     _experiences: dict[str, ExperienceRead] = field(default_factory=dict)
     _bullets: dict[str, str] = field(default_factory=dict)
+    _projects: dict[str, ProjectRead] = field(default_factory=dict)
     skills: set[str] = field(default_factory=set)
     years: set[int] = field(default_factory=set)
     vocabulary: set[str] = field(default_factory=set)
@@ -45,6 +51,9 @@ class ProfileIndex:
             self._experiences[experience_label(position)] = experience
             for bullet_position, bullet in enumerate(experience.bullets):
                 self._bullets[bullet_label(position, bullet_position)] = bullet.text
+
+        for position, project in enumerate(self.profile.projects):
+            self._projects[project_label(position)] = project
 
         self.skills = {_normalize(skill.name) for skill in self.profile.skills}
 
@@ -77,6 +86,9 @@ class ProfileIndex:
     def bullet(self, label: str) -> str | None:
         """The original text of a bullet, or None if the label resolves to nothing."""
         return self._bullets.get(label)
+
+    def project(self, label: str) -> ProjectRead | None:
+        return self._projects.get(label)
 
     def years_for(self, experience: ExperienceRead) -> set[int]:
         """Every year one experience spans, so its bullets can be date-checked in context.
