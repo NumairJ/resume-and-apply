@@ -15,11 +15,15 @@ from datetime import date
 
 from schemas.profile import Profile
 from schemas.resume import TailoredResume
-from services.guardrails.references import ProfileIndex
+from services.guardrails.references import PROPER_PHRASE, ProfileIndex
 
 # A rewrite has to keep this share of its source bullet's meaningful words. Low enough
 # that genuine rephrasing survives, high enough that a new claim does not.
 MIN_BULLET_OVERLAP = 0.35
+
+# Projects are measured the other way round — see `grounding_ratio`. This is the share of
+# the *rewrite* that must be supported by the source description.
+MIN_PROJECT_GROUNDING = 0.6
 
 # Words carrying no evidence of shared content, excluded before measuring overlap so
 # two sentences aren't judged similar for both containing "the".
@@ -43,8 +47,6 @@ FORBIDDEN_PHRASES = [
 
 _WORD = re.compile(r"[a-z0-9]+")
 _YEAR = re.compile(r"\b(19|20)\d{2}\b")
-# Two or more consecutive capitalised words: the shape of an organisation name.
-_PROPER_PHRASE = re.compile(r"\b([A-Z][\w&.-]*(?:\s+[A-Z][\w&.-]*)+)")
 
 # Capitalised phrases that are ordinary English rather than organisation names.
 _PROPER_ALLOWLIST = frozenset(
@@ -199,13 +201,19 @@ def check_bullet_traceability(
 def check_project_traceability(
     resume: TailoredResume, index: ProfileIndex
 ) -> list[Violation]:
-    """The same bargain as bullets: a rewrite must still be its original.
+    """Everything the résumé claims about a project must come from the profile's own
+    description of it.
 
-    With one extra rule that bullets don't need. A project row may legitimately have no
-    description — the name and dates are the whole record — and there is then nothing to
-    rewrite *from*. Text produced in that case is not a rephrasing of anything, it is
-    invention, so it has to be empty. The project still appears; it just appears as the
-    bare facts the profile actually holds.
+    Measured with `grounding_ratio`, not `overlap_ratio` — a project description is a
+    paragraph and the résumé entry is a line, so demanding that the line retain a third
+    of the paragraph is unpassable by construction and contradicts the one-page budget
+    the model is asked to work to.
+
+    Plus one rule bullets don't need. A project row may legitimately have no description
+    — the name and dates are the whole record — and there is then nothing to rewrite
+    *from*. Text produced in that case is not a rephrasing of anything, it is invention,
+    so it has to be empty. The project still appears; it just appears as the bare facts
+    the profile actually holds.
     """
     violations = []
     for project in resume.projects:
@@ -230,14 +238,15 @@ def check_project_traceability(
         if not rewrite:
             continue  # dropping the description loses nothing that wasn't the user's
 
-        ratio = overlap_ratio(rewrite, original)
-        if ratio < MIN_BULLET_OVERLAP:
+        ratio = grounding_ratio(rewrite, original)
+        if ratio < MIN_PROJECT_GROUNDING:
             violations.append(
                 Violation(
                     "traceability",
-                    f"project {project.source!r} keeps only {ratio:.0%} of its source "
-                    f"wording (minimum {MIN_BULLET_OVERLAP:.0%}). Rewrite the original "
-                    f"rather than writing a new claim. Original: {original!r}",
+                    f"only {ratio:.0%} of what project {project.source!r} claims appears "
+                    f"in its recorded description (minimum "
+                    f"{MIN_PROJECT_GROUNDING:.0%}). Shorten the original rather than "
+                    f"writing new claims. Original: {original!r}",
                 )
             )
     return violations
@@ -322,7 +331,7 @@ def check_forbidden_content(
                     Violation("style", f"{label} contains the phrase {phrase!r}")
                 )
 
-        for match in _PROPER_PHRASE.finditer(text):
+        for match in PROPER_PHRASE.finditer(text):
             phrase = match.group(1)
             if _phrase_allowed(phrase, allowed):
                 continue
@@ -369,6 +378,27 @@ def overlap_ratio(rewrite: str, source: str) -> float:
     if not original:
         return 0.0
     return len(original & _content_words(rewrite)) / len(original)
+
+
+def grounding_ratio(rewrite: str, source: str) -> float:
+    """How much of the **rewrite** is supported by the source.
+
+    The mirror image of `overlap_ratio`, and the difference is not stylistic — the two
+    measures answer different questions, and which one is answerable depends on the
+    shape of the source.
+
+    A bullet and its rewrite are about the same length, so "did the original claim
+    survive?" is a fair question and retention is the right measure. A project
+    description is a paragraph and the résumé needs one line: a 12-word entry drawn from
+    a 68-word description can retain at most 18% of it however faithful it is, so the
+    retention question has no passing answer and asking it rejects every correct
+    rewrite. What can be asked is the containment question — is everything you wrote
+    supported by what I wrote? — which summarising satisfies and invention does not.
+    """
+    claimed = _content_words(rewrite)
+    if not claimed:
+        return 1.0  # nothing asserted, nothing to support
+    return len(claimed & _content_words(source)) / len(claimed)
 
 
 def _content_words(text: str) -> set[str]:

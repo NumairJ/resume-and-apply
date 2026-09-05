@@ -4,6 +4,7 @@ Nothing is namespaced under `/api` — the Next.js rewrite strips that prefix, s
 browser's `/api/resumes/generate` arrives here as `/resumes/generate`.
 """
 
+import logging
 import re
 import uuid
 from pathlib import Path
@@ -24,6 +25,13 @@ from services.llm.base import LLMError, LLMProvider
 from services.profile import get_profile
 
 router = APIRouter(prefix="/resumes", tags=["resumes"])
+
+# The only logger in the backend, and it earns its place. A refused generation used to
+# leave nothing behind but an access-log line reading `422 Unprocessable Entity` — the
+# violations lived in the HTTP response and vanished with it, so working out why a
+# generation failed meant rebuilding `ProfileIndex` against the database by hand and
+# re-running the checks. Once was enough.
+logger = logging.getLogger(__name__)
 
 
 @router.post("/generate", response_model=GenerateResumeResponse)
@@ -55,12 +63,18 @@ def generate_resume(
     except GuardrailFailure as exc:
         # The generation was refused rather than silently returned. Name the violations
         # so the failure is diagnosable instead of mysterious.
+        reasons = [str(violation) for violation in exc.violations]
+        # Deliberately narrow: the violations, the attempt count and which posting. No
+        # profile text, no model output, and nothing that could carry a key.
+        logger.warning(
+            "Generation refused for posting %s after %d attempts: %s",
+            payload.job_posting_id,
+            exc.attempts,
+            "; ".join(reasons),
+        )
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
-            {
-                "message": str(exc),
-                "violations": [str(violation) for violation in exc.violations],
-            },
+            {"message": str(exc), "violations": reasons},
         ) from exc
     except LLMError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc

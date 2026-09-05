@@ -100,9 +100,17 @@ def sample_profile() -> Profile:
             ProjectRead(
                 id=_uuid(),
                 name="Portfolio Site",
+                # Shaped like a real one, because the fixture's shape is what the checks
+                # get exercised against: several lines of notes rather than résumé copy,
+                # a proper noun ("RESTful API") that is not a skill, and a line break
+                # directly between two capitalised words ("Bootstrap" / "Built"), which
+                # a phrase pattern joining on `\s+` would read as one invented name.
                 description=(
                     "Personal site built with Next.js and a typed API layer, "
-                    "deployed on a single container"
+                    "deployed on a single container.\n"
+                    "Styled with Bootstrap\n"
+                    "Built a RESTful API for the writing archive and wired it to a "
+                    "Postgres store with cached reads"
                 ),
                 url="https://dana.example/portfolio",
                 start_date=date(2022, 4, 1),

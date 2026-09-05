@@ -1,5 +1,6 @@
 """Prompt rendering, the retry loop, and assembly."""
 
+import logging
 import uuid
 from datetime import date
 
@@ -118,6 +119,17 @@ def test_violations_are_fed_back_and_a_clean_retry_succeeds(profile, posting) ->
     # The retry has to name the problem; "try again" produces the same output.
     assert "Kubernetes" in provider.prompts[1]
     assert "rejected by automated validation" in provider.prompts[1]
+
+
+def test_a_rejected_attempt_is_logged_before_the_retry(profile, posting, caplog) -> None:
+    """A retry is a whole extra model call. `attempts: 2` in the response used to be the
+    only sign one happened, with no way to find out what the first draft got wrong."""
+    provider = FakeLLMProvider([broken_resume(), valid_resume()])
+    with caplog.at_level(logging.INFO):
+        tailoring.generate(profile, posting, provider)
+
+    assert "Attempt 1 rejected" in caplog.text
+    assert "Kubernetes" in caplog.text
 
 
 def test_persistent_violations_stop_after_two_retries(profile, posting) -> None:

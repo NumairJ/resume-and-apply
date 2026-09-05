@@ -16,7 +16,8 @@ from schemas.resume import (
     TailoredResume,
 )
 from services import guardrails
-from services.guardrails import overlap_ratio
+from services.guardrails import MIN_PROJECT_GROUNDING, grounding_ratio, overlap_ratio
+from services.guardrails.references import PROPER_PHRASE
 from tests.factories import valid_resume
 
 
@@ -185,11 +186,46 @@ def test_duplicated_project_is_rejected(profile: Profile) -> None:
 
 
 def test_untraceable_project_rewrite_is_rejected(profile: Profile) -> None:
-    """Same bargain as a bullet: a rewrite must still be its original."""
+    """Everything the line claims has to come from the recorded description."""
     resume = valid_resume()
     resume.projects[0].text = "Led a distributed team building trading infrastructure"
     violations = guardrails.run_all(resume, profile)
     assert any(v.check == "traceability" and "P1" in v.message for v in violations)
+
+
+def test_a_project_line_may_say_much_less_than_the_description(
+    profile: Profile,
+) -> None:
+    """Projects are measured by grounding, not retention, and this is why.
+
+    A profile's project description is a paragraph of notes; the résumé needs one line.
+    Under the retention measure bullets use, a 12-word line drawn from a 60-word
+    description can score at most ~20% however faithful it is — so the check had no
+    passing answer and rejected every correct rewrite, while the prompt was
+    simultaneously demanding a one-page résumé.
+    """
+    source = profile.projects[0].description
+    concise = "Personal site with a typed API layer"
+
+    assert overlap_ratio(concise, source) < 0.35  # would have been rejected
+    assert grounding_ratio(concise, source) == 1.0  # every word is supported
+
+    resume = valid_resume()
+    resume.projects[0].text = concise
+    assert guardrails.run_all(resume, profile) == []
+
+
+def test_grounding_measures_the_rewrite_not_the_source() -> None:
+    source = "Built a task manager in Python with a Postgres store"
+
+    # Says less than the source: fully supported.
+    assert grounding_ratio("Built a task manager in Python", source) == 1.0
+    # Says more than the source: the added claims are unsupported.
+    assert grounding_ratio(
+        "Shipped a trading platform for Boeing in Rust across three regions", source
+    ) < MIN_PROJECT_GROUNDING
+    # Nothing asserted, nothing to support — the empty case is not a violation.
+    assert grounding_ratio("", source) == 1.0
 
 
 def test_description_written_for_a_project_that_has_none_is_rejected(
@@ -242,6 +278,91 @@ def test_project_text_is_covered_by_the_style_check(profile: Profile) -> None:
     )
     violations = guardrails.run_all(resume, profile)
     assert any(v.check == "style" and "P1" in v.message for v in violations)
+
+
+# --- the profile's own words are not fabrication -----------------------------
+#
+# A live run against a real posting was refused three times for "naming" RESTful API,
+# Team Builder and Convolutional Neural Network — every one of them typed by the user
+# into their own bullets and project descriptions. The vocabulary was built from *names*
+# only (company, title, school, degree, project name, skill, link label), so a proper
+# noun that lived solely in free text was unknown to the check, and any faithful rewrite
+# carrying it was rejected as invented. Adding projects to the résumé made this near
+# certain; it had been latent for bullets since Phase 4.
+
+
+def test_a_proper_noun_from_a_stored_bullet_is_not_fabrication(
+    profile: Profile,
+) -> None:
+    profile.experiences[0].bullets[0].text = (
+        "Reduced payment service error rates by hardening the Apache Kafka retry path"
+    )
+    resume = valid_resume()
+    resume.experiences[0].bullets[0].text = (
+        "Hardened the Apache Kafka retry path, reducing payment service error rates"
+    )
+    assert guardrails.run_all(resume, profile) == []
+
+
+def test_a_proper_noun_from_a_stored_project_description_is_not_fabrication(
+    profile: Profile,
+) -> None:
+    """The exact live failure: the fixture's description says "RESTful API"."""
+    resume = valid_resume()
+    resume.projects[0].text = "Built a RESTful API for the writing archive"
+    assert guardrails.run_all(resume, profile) == []
+
+
+def test_a_proper_noun_from_the_profile_summary_is_not_fabrication(
+    profile: Profile,
+) -> None:
+    profile.summary = "Backend engineer, mostly Google Cloud Platform and Postgres."
+    resume = valid_resume()
+    resume.summary = "Backend engineer working in Google Cloud Platform and Postgres."
+    assert guardrails.run_all(resume, profile) == []
+
+
+def test_an_invented_organisation_still_fails(profile: Profile) -> None:
+    """The counterweight. A vocabulary widened until it accepted everything would make
+    every test above pass while destroying the guarantee they exist to protect."""
+    resume = valid_resume()
+    resume.summary = "Software engineer, previously at Goldman Sachs."
+    violations = guardrails.run_all(resume, profile)
+    assert any(v.check == "fabrication" and "Goldman Sachs" in v.message for v in violations)
+
+
+def test_words_recombined_across_the_profile_are_still_fabrication(
+    profile: Profile,
+) -> None:
+    """Why phrases are mined rather than loose words.
+
+    "Northwind" and "Systems" both appear in the profile — the first as a company, the
+    second nowhere as a pair with it. Interning individual tokens would let a model
+    assemble an employer nobody has worked for out of the profile's own vocabulary.
+    """
+    profile.experiences[0].bullets[0].text = "Built Northwind tooling for Contoso Systems"
+    resume = valid_resume()
+    resume.summary = "Engineer at Contoso Northwind."
+    violations = guardrails.run_all(resume, profile)
+    assert any(v.check == "fabrication" for v in violations)
+
+
+def test_a_line_break_does_not_manufacture_a_proper_noun(profile: Profile) -> None:
+    """The fixture description breaks the line between "Bootstrap" and "Built".
+
+    Joining phrase words on `\\s+` matches that newline and yields "Bootstrap Built" — a
+    name nobody wrote, which therefore matches nothing in any vocabulary and is reported
+    as fabrication. Real profiles are full of such line breaks.
+    """
+    found = PROPER_PHRASE.findall("Styled with Bootstrap\nBuilt a RESTful API")
+    assert "Bootstrap Built" not in found
+    # The genuine phrase on the second line is still found — the fix narrows what counts
+    # as a word gap, it does not stop the pattern working.
+    assert found == ["RESTful API"]
+    # And a real two-word name on one line is unaffected.
+    assert PROPER_PHRASE.findall("Styled with Bootstrap Framework today") == [
+        "Bootstrap Framework"
+    ]
 
 
 # --- style ------------------------------------------------------------------

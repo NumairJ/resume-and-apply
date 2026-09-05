@@ -51,11 +51,14 @@ Omit anything that adds nothing. A shorter, sharper resume beats a complete one.
 - **Every bullet must cite the `source` label of the bullet it was rewritten from.** A
   rewrite must remain the same claim as its original: change emphasis, ordering and
   vocabulary, never the facts, numbers, scope, or technologies.
-- **Every project must cite the `source` label of the project it is.** Rewrite its
-  description the same way you rewrite a bullet — same claim, sharpened toward the
-  posting. If the profile records **no description** for that project, leave `text`
-  empty: there is nothing to rewrite, and the project will appear as its name and dates
-  alone. Never write a description for a project that has none.
+- **Every project must cite the `source` label of the project it is.** Project
+  descriptions in the profile are usually **several sentences of notes, not résumé
+  copy** — compress each one to a single line, at most two, keeping the description's
+  own words for the technologies and the achievement. Say less than the source, never
+  more: every claim in your line has to be supported by the description you were given.
+  If the profile records **no description** for that project, leave `text` empty — there
+  is nothing to compress, and the project will appear as its name and dates alone. Never
+  write a description for a project that has none.
 - **Never invent.** If the posting asks for something absent from the profile, leave it
   out. Omission is correct; a fabricated qualification is not.
 - **`skills` must be copied exactly** from the profile's skills list, one name per

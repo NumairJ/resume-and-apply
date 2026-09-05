@@ -1,5 +1,6 @@
 """Resume tailoring: render the prompt, generate, validate, retry, assemble."""
 
+import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,6 +43,11 @@ MAX_BULLETS = 4
 MAX_PROJECTS = 3
 MAX_SKILLS = 14
 
+# Every rejected attempt is a whole extra model call. Logging them makes that cost, and
+# the reason for it, visible — a generation reporting `attempts: 2` used to give no way
+# to find out what the first draft got wrong.
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class TailoringResult:
@@ -75,6 +81,12 @@ def generate(
                 rationale=tailored.rationale,
                 attempts=attempt,
             )
+
+        logger.info(
+            "Attempt %d rejected, retrying: %s",
+            attempt,
+            "; ".join(str(violation) for violation in violations),
+        )
 
         # Name the specific violations. A bare "try again" gives the model nothing to
         # correct, and tends to produce the same output.

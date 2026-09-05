@@ -21,6 +21,18 @@ from schemas.profile import ExperienceRead, Profile, ProjectRead
 
 _WORD = re.compile(r"[a-z0-9]+")
 
+# Two or more consecutive capitalised words: the shape of an organisation name.
+#
+# Lives here rather than in `checks.py` because both sides need it — this module *mines*
+# the profile's own free text for known phrases, and `checks.py` *scans* generated text
+# for unknown ones. One pattern, so the two cannot disagree about what a phrase is.
+#
+# The joiner is horizontal whitespace, never `\s+`. A newline is a sentence boundary, not
+# a word gap: with `\s+`, a description reading "…built with Bootstrap\nBuilt a REST API…"
+# yields the phrase "Bootstrap Built", which nobody wrote and which therefore matches
+# nothing in any vocabulary. Real profiles are full of such line breaks.
+PROPER_PHRASE = re.compile(r"\b([A-Z][\w&.-]*(?:[^\S\r\n]+[A-Z][\w&.-]*)+)")
+
 
 def experience_label(index: int) -> str:
     return f"E{index + 1}"
@@ -79,6 +91,32 @@ class ProfileIndex:
             ]
             if value
         }
+
+        # And the proper nouns the user wrote in their own free text.
+        #
+        # Names alone were not enough, and the gap was not theoretical: a live run was
+        # rejected three times for "naming" RESTful API, Team Builder and Convolutional
+        # Neural Network — every one of them typed by the user into their own bullets and
+        # project descriptions. The check was calling the profile's own words invented.
+        #
+        # Phrases, never loose words. Adding the individual tokens would let a model
+        # recombine "Northwind" from one bullet and "Systems" from another into an
+        # employer nobody has ever worked for, which is the exact failure this check
+        # exists to catch. Reusing a phrase the user actually typed is not fabrication;
+        # assembling a new one from their vocabulary would be.
+        self.vocabulary |= {
+            _normalize(match.group(1))
+            for text in self._authored_text()
+            for match in PROPER_PHRASE.finditer(text)
+        }
+
+    def _authored_text(self) -> list[str]:
+        """Every free-text field the user wrote themselves and the model is shown."""
+        return [
+            self.profile.summary or "",
+            *self._bullets.values(),
+            *(project.description or "" for project in self.profile.projects),
+        ]
 
     def experience(self, label: str) -> ExperienceRead | None:
         return self._experiences.get(label)

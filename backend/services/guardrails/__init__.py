@@ -1,6 +1,8 @@
 from services.guardrails.checks import (
     MIN_BULLET_OVERLAP,
+    MIN_PROJECT_GROUNDING,
     Violation,
+    grounding_ratio,
     overlap_ratio,
     run_all,
 )
@@ -30,10 +32,12 @@ class GuardrailFailure(Exception):
 __all__ = [
     "GuardrailFailure",
     "MIN_BULLET_OVERLAP",
+    "MIN_PROJECT_GROUNDING",
     "ProfileIndex",
     "Violation",
     "bullet_label",
     "experience_label",
+    "grounding_ratio",
     "overlap_ratio",
     "project_label",
     "run_all",

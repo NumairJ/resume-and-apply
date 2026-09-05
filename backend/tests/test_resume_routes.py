@@ -1,6 +1,7 @@
 """Routes for /providers and /resumes/generate."""
 
 import hashlib
+import logging
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -201,6 +202,27 @@ def test_guardrail_failure_is_422_naming_the_violations(
     assert response.status_code == 422
     detail = response.json()["detail"]
     assert any("Kubernetes" in violation for violation in detail["violations"])
+
+
+def test_a_refused_generation_names_its_violations_in_the_log(
+    client: TestClient, seeded: dict, caplog
+) -> None:
+    """Before this, a refusal left nothing behind but `422 Unprocessable Entity`.
+
+    The violations lived in the HTTP response and vanished with it, so diagnosing a live
+    failure meant rebuilding `ProfileIndex` against the database by hand and re-running
+    the checks. Once was enough.
+    """
+    provider = FakeLLMProvider([broken_resume()] * 3)
+    with caplog.at_level(logging.WARNING):
+        with_provider(client, provider).post(
+            "/resumes/generate", json={"job_posting_id": seeded["posting_id"]}
+        )
+
+    logged = caplog.text
+    assert "Kubernetes" in logged
+    assert seeded["posting_id"] in logged
+    assert "3 attempts" in logged
 
 
 def test_provider_failure_is_502(client: TestClient, seeded: dict) -> None:
