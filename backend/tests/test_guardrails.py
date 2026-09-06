@@ -4,20 +4,19 @@ These are what make "this doesn't fabricate" checkable rather than a claim in a 
 Each rejection test feeds the chain deliberately fabricated output and asserts it is
 caught; `test_a_legitimate_rewrite_passes` is the counterweight, because a chain that
 rejected everything would produce an identically green run while being useless.
+
+The chain was loosened deliberately after it spent a live run rejecting the candidate's
+own words, so the counterweights matter more than they used to: several tests below
+exist only to prove a relaxed check has not gone soft.
 """
 
 import pytest
 
 from schemas.profile import Profile
-from schemas.resume import (
-    TailoredBullet,
-    TailoredExperience,
-    TailoredProject,
-    TailoredResume,
-)
+from schemas.resume import TailoredBullet, TailoredExperience, TailoredProject
 from services import guardrails
 from services.guardrails import overlap_ratio
-from services.guardrails.references import PROPER_PHRASE
+from services.guardrails.references import ProfileIndex, numbers_in
 from tests.factories import valid_resume
 
 
@@ -38,7 +37,7 @@ def test_heavily_reworded_but_faithful_bullet_passes(profile: Profile) -> None:
     assert guardrails.run_all(resume, profile) == []
 
 
-# --- the five rejections ----------------------------------------------------
+# --- the rejections ---------------------------------------------------------
 
 
 def test_invented_employer_is_rejected(profile: Profile) -> None:
@@ -52,13 +51,6 @@ def test_invented_employer_is_rejected(profile: Profile) -> None:
     )
     violations = guardrails.run_all(resume, profile)
     assert any(v.check == "references" and "E9" in v.message for v in violations)
-
-
-def test_invented_employer_named_in_the_summary_is_rejected(profile: Profile) -> None:
-    resume = valid_resume()
-    resume.summary = "Engineer who led payments at Initech Global before Northwind Systems."
-    violations = guardrails.run_all(resume, profile)
-    assert any(v.check == "fabrication" and "Initech" in v.message for v in violations)
 
 
 def test_shifted_date_is_rejected(profile: Profile) -> None:
@@ -246,43 +238,123 @@ def test_a_project_with_no_bullets_may_still_be_selected(profile: Profile) -> No
     assert guardrails.run_all(resume, profile) == []
 
 
-def test_project_bullets_are_covered_by_the_fabrication_check(
-    profile: Profile,
-) -> None:
-    """They are free text, so they get the same net as experience bullets."""
-    resume = valid_resume()
-    resume.projects[0].bullets[0].text = (
-        "Personal site built with Next.js and a typed API layer, deployed on "
-        "Northwind Cloud"
-    )
-    violations = guardrails.run_all(resume, profile)
-    assert any(
-        v.check == "fabrication" and "Northwind Cloud" in v.message for v in violations
-    )
+# --- figures -----------------------------------------------------------------
+#
+# The check word overlap cannot do. An inflated metric is the most damaging thing a
+# tailored resume can carry, and the most invisible: every word around it is faithful,
+# so traceability scores it highly and waves it through.
 
 
-def test_project_bullets_are_covered_by_the_style_check(profile: Profile) -> None:
+def test_an_inflated_metric_is_rejected(profile: Profile) -> None:
+    """E1B1 records "from 2.1% to 0.3%". An 86% reduction is arithmetic the candidate
+    never claimed, and it is the figure a reference check would disprove."""
     resume = valid_resume()
-    resume.projects[0].bullets[0].text = (
-        "Personal site built with Next.js and a typed API layer, a testament to "
-        "deployment"
+    resume.experiences[0].bullets[0].text = (
+        "Reduced payment service error rates by 86% by hardening the retry path"
     )
     violations = guardrails.run_all(resume, profile)
-    assert any(v.check == "style" and "P1B1" in v.message for v in violations)
+    assert any(v.check == "metrics" and "86%" in v.message for v in violations)
+
+
+def test_the_metric_violation_quotes_the_source(profile: Profile) -> None:
+    """The retry has to be able to act on this, which means seeing the real figures."""
+    resume = valid_resume()
+    resume.experiences[0].bullets[0].text = (
+        "Reduced payment service error rates by 86% by hardening the retry path"
+    )
+    message = next(
+        v.message for v in guardrails.run_all(resume, profile) if v.check == "metrics"
+    )
+    assert "2.1% to 0.3%" in message
+
+
+def test_a_figure_borrowed_from_a_sibling_bullet_is_rejected(profile: Profile) -> None:
+    """Both bullets are real, and the combination is not. 40,000 belongs to the billing
+    migration, not to the retry path, so a bullet may only carry its own source's
+    figures."""
+    resume = valid_resume()
+    resume.experiences[0].bullets[0].text = (
+        "Hardened the payment service retry path, reducing error rates for 40,000 "
+        "accounts"
+    )
+    violations = guardrails.run_all(resume, profile)
+    assert any(v.check == "metrics" and "E1B1" in v.message for v in violations)
+
+
+def test_keeping_the_original_figures_passes(profile: Profile) -> None:
+    """The counterweight: the check must not push the model into dropping real numbers,
+    which are the most persuasive thing on a resume."""
+    resume = valid_resume()
+    resume.experiences[0].bullets[0].text = (
+        "Hardened the payment retry path, cutting payment service error rates from "
+        "2.1% to 0.3%"
+    )
+    assert guardrails.run_all(resume, profile) == []
+
+
+def test_shortening_a_figure_is_not_inventing_one(profile: Profile) -> None:
+    """E1B2 says "40,000". Writing it as "40k" is tightening, which is what tailoring is
+    for — and the reference implementation this check came from would have flagged it."""
+    resume = valid_resume()
+    resume.experiences[0].bullets[1].text = (
+        "Migrated the billing database to Postgres with zero downtime for 40k accounts"
+    )
+    assert guardrails.run_all(resume, profile) == []
+
+
+def test_an_invented_figure_in_the_summary_is_rejected(profile: Profile) -> None:
+    """The summary cites no source, so it is checked against every figure recorded."""
+    resume = valid_resume()
+    resume.summary = "Engineer who cut payment error rates by 92% across the platform."
+    violations = guardrails.run_all(resume, profile)
+    assert any(v.check == "metrics" and "92%" in v.message for v in violations)
+
+
+def test_small_counts_and_years_do_not_fire(profile: Profile) -> None:
+    """Two exclusions, both there to keep this check signal rather than noise.
+
+    Incidental counts assert nothing on their own, and years belong to `check_dates`,
+    which knows the range each claim may fall in — reporting them here as well would
+    raise two violations for one mistake and hand the model a contradictory retry note.
+    """
+    resume = valid_resume()
+    resume.experiences[0].bullets[0].text = (
+        "Hardened the payment service retry path across 3 regions, reducing error "
+        "rates through 2024"
+    )
+    violations = guardrails.run_all(resume, profile)
+    assert not any(v.check == "metrics" for v in violations)
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("cut costs by $1,200.00", {"1200"}),
+        ("supported 40,000 accounts", {"40000"}),
+        ("supported 40k accounts", {"40000"}),
+        ("reached 1.2M users", {"1200000"}),
+        ("improved throughput 3x", {"3x"}),
+        ("from 2.1% to 0.3%", {"2.1%", "0.3%"}),
+        # Two separate figures: the unit is not decoration, so "40" does not satisfy a
+        # claim of "40%" and the pair is kept apart.
+        ("grew 40% on 40 servers", {"40%", "40"}),
+        ("shipped in 2024 with 3 engineers", set()),
+    ],
+)
+def test_number_normalisation(text: str, expected: set[str]) -> None:
+    assert numbers_in(text) == expected
 
 
 # --- the profile's own words are not fabrication -----------------------------
 #
 # A live run against a real posting was refused three times for "naming" RESTful API,
 # Team Builder and Convolutional Neural Network — every one of them typed by the user
-# into their own bullets and project descriptions. The vocabulary was built from *names*
-# only (company, title, school, degree, project name, skill, link label), so a proper
-# noun that lived solely in free text was unknown to the check, and any faithful rewrite
-# carrying it was rejected as invented. Adding projects to the résumé made this near
-# certain; it had been latent for bullets since Phase 4.
+# into their own bullets. A scan for capitalised phrases used to reject any that were
+# not mined from the profile, and it is gone. These pin the property that outlasted it:
+# a faithful rewrite carrying the candidate's own wording passes the whole chain.
 
 
-def test_a_proper_noun_from_a_stored_bullet_is_not_fabrication(
+def test_a_rewrite_keeping_a_proper_noun_from_its_source_passes(
     profile: Profile,
 ) -> None:
     profile.experiences[0].bullets[0].text = (
@@ -295,7 +367,7 @@ def test_a_proper_noun_from_a_stored_bullet_is_not_fabrication(
     assert guardrails.run_all(resume, profile) == []
 
 
-def test_a_proper_noun_from_a_stored_project_bullet_is_not_fabrication(
+def test_a_rewrite_keeping_a_proper_noun_from_a_project_bullet_passes(
     profile: Profile,
 ) -> None:
     """The exact live failure: the fixture's own bullet says "RESTful API"."""
@@ -310,66 +382,83 @@ def test_a_proper_noun_from_a_stored_project_bullet_is_not_fabrication(
     assert guardrails.run_all(resume, profile) == []
 
 
-def test_a_proper_noun_from_the_profile_summary_is_not_fabrication(
+def test_an_unfamiliar_organisation_in_the_summary_is_accepted(
     profile: Profile,
 ) -> None:
-    profile.summary = "Backend engineer, mostly Google Cloud Platform and Postgres."
+    """The accepted cost of removing the proper-noun scan, pinned rather than left to be
+    discovered.
+
+    The summary is free text and it prints on the resume, so this is a real gap. It is
+    accepted because the check that closed it was rejecting the candidate's own words
+    several times per live run, and because the structural guarantee is untouched: the
+    model has no field in which to write an employer, so this cannot become a job on the
+    resume — only a sentence the candidate will read in the preview before applying.
+    """
     resume = valid_resume()
-    resume.summary = "Backend engineer working in Google Cloud Platform and Postgres."
+    resume.summary = "Software engineer, previously at Goldman Sachs."
+    assert not any(v.check == "fabrication" for v in guardrails.run_all(resume, profile))
+
+
+# --- skill promotion ---------------------------------------------------------
+
+
+def test_a_skill_promoted_from_a_project_stack_passes(profile: Profile) -> None:
+    """Docker is in P1's stack and is not a skills row. Requiring it to be typed a
+    second time under Settings rejected honest output — the candidate plainly claims it.
+    """
+    resume = valid_resume()
+    resume.skills = ["Python", "Docker"]
     assert guardrails.run_all(resume, profile) == []
 
 
-def test_an_invented_organisation_still_fails(profile: Profile) -> None:
-    """The counterweight. A vocabulary widened until it accepted everything would make
-    every test above pass while destroying the guarantee they exist to protect."""
+def test_a_skill_promoted_from_a_bullet_passes(profile: Profile) -> None:
     resume = valid_resume()
-    resume.summary = "Software engineer, previously at Goldman Sachs."
+    resume.skills = ["React"]  # E2B1 says "Built internal React dashboards"
+    assert guardrails.run_all(resume, profile) == []
+
+
+def test_promotion_does_not_mean_anything_goes(profile: Profile) -> None:
+    """The counterweight for the loosest check in the chain. A membership test widened
+    until it accepted everything would make every test above pass while destroying the
+    guarantee they exist to protect."""
+    resume = valid_resume()
+    resume.skills = ["Kubernetes", "Rust", "Terraform"]
     violations = guardrails.run_all(resume, profile)
-    assert any(v.check == "fabrication" and "Goldman Sachs" in v.message for v in violations)
+    assert {v.check for v in violations} == {"skills"}
+    assert len(violations) == 3
 
 
-def test_words_recombined_across_the_profile_are_still_fabrication(
-    profile: Profile,
-) -> None:
-    """Why phrases are mined rather than loose words.
+# --- how profile text is matched ---------------------------------------------
 
-    "Northwind" and "Systems" both appear in the profile — the first as a company, the
-    second nowhere as a pair with it. Interning individual tokens would let a model
-    assemble an employer nobody has worked for out of the profile's own vocabulary.
+
+def test_mentions_ignores_accents(profile: Profile) -> None:
+    """The old normaliser kept only `[a-z0-9]`, so "Pokémon" became "pok mon" and a
+    résumé spelling it "Pokemon" compared unequal to the profile's own project name.
+    Not hypothetical — that is a real project in the live database."""
+    profile.projects[1].name = "Pokémon PokéDex"
+    index = ProfileIndex(profile)
+
+    assert index.mentions("Pokemon PokeDex")
+    assert index.mentions("Pokémon PokéDex")
+
+
+def test_mentions_matches_whole_words_not_substrings(profile: Profile) -> None:
+    """Raw containment would read every profile mentioning Django as claiming Go."""
+    profile.experiences[0].bullets[0].text = "Reduced error rates in the Django service"
+    index = ProfileIndex(profile)
+
+    assert not index.mentions("Go")
+    assert index.mentions("Django")
+
+
+def test_mentions_does_not_match_across_two_fields(profile: Profile) -> None:
+    """Fields are matched whole, not joined into one document. P1 is named "Portfolio
+    Site" and its stack begins "Next.js"; joining them would make "Site Next" findable.
     """
-    profile.experiences[0].bullets[0].text = "Built Northwind tooling for Contoso Systems"
-    resume = valid_resume()
-    resume.summary = "Engineer at Contoso Northwind."
-    violations = guardrails.run_all(resume, profile)
-    assert any(v.check == "fabrication" for v in violations)
+    index = ProfileIndex(profile)
 
-
-def test_a_line_break_does_not_manufacture_a_proper_noun(profile: Profile) -> None:
-    """The fixture description breaks the line between "Bootstrap" and "Built".
-
-    Joining phrase words on `\\s+` matches that newline and yields "Bootstrap Built" — a
-    name nobody wrote, which therefore matches nothing in any vocabulary and is reported
-    as fabrication. Real profiles are full of such line breaks.
-    """
-    found = PROPER_PHRASE.findall("Styled with Bootstrap\nBuilt a RESTful API")
-    assert "Bootstrap Built" not in found
-    # The genuine phrase on the second line is still found — the fix narrows what counts
-    # as a word gap, it does not stop the pattern working.
-    assert found == ["RESTful API"]
-    # And a real two-word name on one line is unaffected.
-    assert PROPER_PHRASE.findall("Styled with Bootstrap Framework today") == [
-        "Bootstrap Framework"
-    ]
-
-
-# --- style ------------------------------------------------------------------
-
-
-def test_llm_tics_are_rejected(profile: Profile) -> None:
-    resume = valid_resume()
-    resume.summary = "A results-driven professional ready to delve into new challenges."
-    violations = guardrails.run_all(resume, profile)
-    assert sum(v.check == "style" for v in violations) >= 1
+    assert index.mentions("Portfolio Site") and index.mentions("Next.js")
+    assert not index.mentions("Site Next.js")
 
 
 # --- the overlap measure itself ---------------------------------------------
@@ -393,6 +482,24 @@ def test_overlap_ratio_behaviour(
 def test_overlap_ignores_stopwords(profile: Profile) -> None:
     """Two sentences must not look similar merely for sharing 'the' and 'and'."""
     assert overlap_ratio("The and of the", "Hardened the retry path") == 0.0
+
+
+def test_the_floor_admits_an_aggressive_but_faithful_rewrite(
+    profile: Profile,
+) -> None:
+    """Pins the drop from 0.35 to 0.25 deliberately rather than incidentally.
+
+    Three of E1B2's nine meaningful words survive — 33%, which the old floor rejected.
+    It is plainly the same claim, and the figures inside a bullet are now checked
+    directly, which is what made the room to loosen this.
+    """
+    rewrite = "Ported the billing store onto Postgres with zero downtime"
+    ratio = overlap_ratio(rewrite, profile.experiences[0].bullets[1].text)
+    assert 0.25 <= ratio < 0.35
+
+    resume = valid_resume()
+    resume.experiences[0].bullets[1].text = rewrite
+    assert guardrails.run_all(resume, profile) == []
 
 
 def test_violations_read_usefully(profile: Profile) -> None:
@@ -420,33 +527,3 @@ def test_faithful_elaboration_passes(profile: Profile) -> None:
         "checkout reliability for customers during peak traffic windows"
     )
     assert guardrails.run_all(resume, profile) == []
-
-
-def test_rationale_may_name_the_target_job(profile: Profile) -> None:
-    """Also a live rejection: the rationale named the role being applied for.
-
-    Explaining the match necessarily names the posting. The rationale is shown to the
-    candidate as an explanation, not printed on the resume.
-    """
-    resume = valid_resume()
-    resume.rationale = (
-        "The Account Executive role at Globex Systems asks for payment reliability, "
-        "which the Northwind Systems work demonstrates directly."
-    )
-    vocabulary = {"account executive", "globex systems"}
-
-    assert guardrails.run_all(resume, profile, posting_vocabulary=vocabulary) == []
-    # Without that licence it is still flagged, so the check has not simply gone soft.
-    assert any(
-        v.check == "fabrication" for v in guardrails.run_all(resume, profile)
-    )
-
-
-def test_the_resume_itself_gets_no_posting_licence(profile: Profile) -> None:
-    """The summary may not claim the target company; only the rationale may name it."""
-    resume = valid_resume()
-    resume.summary = "Engineer who delivered payment reliability at Globex Systems."
-    violations = guardrails.run_all(
-        resume, profile, posting_vocabulary={"globex systems"}
-    )
-    assert any(v.check == "fabrication" and "Globex" in v.message for v in violations)

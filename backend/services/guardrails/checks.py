@@ -2,11 +2,22 @@
 
 Every check here is hardcoded, never LLM-judged. That is deliberate: asking a model
 whether another model fabricated something inherits the same failure mode. Set
-membership and token overlap are decidable, and decidable is what makes the
-anti-fabrication claim checkable rather than aspirational.
+membership, token overlap and year membership are decidable, and decidable is what makes
+the anti-fabrication claim checkable rather than aspirational.
 
 Each check returns structured `Violation`s rather than a boolean, because the retry has
 to tell the model precisely what it got wrong.
+
+**What is deliberately not checked: organisation names in free text.** A scan for
+capitalised phrases used to live here, rejecting any that were not mined from the
+profile. It was the only check that ever produced a false rejection, and it produced
+them constantly — a single live run was refused three times for "naming" RESTful API,
+Team Builder and Convolutional Neural Network, every one of them typed by the user. The
+shape of the check guaranteed more of the same, because ordinary capitalised English is
+indistinguishable from an invented employer under a string match. It is gone, and the
+consequence is stated honestly: a summary reading "previously at Goldman Sachs" would
+not be caught. The structural guarantee is untouched — the model has no field in which
+to write an employer — and bullets remain anchored to a cited source below.
 """
 
 import re
@@ -14,12 +25,17 @@ from dataclasses import dataclass
 from datetime import date
 
 from schemas.profile import Profile
-from schemas.resume import TailoredResume
-from services.guardrails.references import PROPER_PHRASE, ProfileIndex
+from schemas.resume import TailoredBullet, TailoredResume
+from services.guardrails.references import ProfileIndex, numbers_in
 
 # A rewrite has to keep this share of its source bullet's meaningful words. Low enough
 # that genuine rephrasing survives, high enough that a new claim does not.
-MIN_BULLET_OVERLAP = 0.35
+#
+# Lowered from 0.35: the figures inside a bullet are now checked directly, which catches
+# the drift that actually matters — an inflated metric wrapped in faithful words — and
+# leaves this measure to do the one job it is good at, catching wholesale invention. An
+# unrelated sentence still scores near zero.
+MIN_BULLET_OVERLAP = 0.25
 
 # Words carrying no evidence of shared content, excluded before measuring overlap so
 # two sentences aren't judged similar for both containing "the".
@@ -28,37 +44,8 @@ STOPWORDS = frozenset(
     to was were will with we our i my""".split()
 )
 
-# Tics that read as machine-written. Not fabrication, but they make a resume worse.
-FORBIDDEN_PHRASES = [
-    "delve into",
-    "tapestry",
-    "testament to",
-    "it is worth noting",
-    "in today's fast-paced",
-    "leverage synergies",
-    "passionate about leveraging",
-    "results-driven professional",
-    "wear many hats",
-]
-
 _WORD = re.compile(r"[a-z0-9]+")
 _YEAR = re.compile(r"\b(19|20)\d{2}\b")
-
-# Capitalised phrases that are ordinary English rather than organisation names.
-_PROPER_ALLOWLIST = frozenset(
-    {
-        "computer science",
-        "machine learning",
-        "data science",
-        "software engineering",
-        "web development",
-        "open source",
-        "full stack",
-        "united states",
-        "new york",
-        "san francisco",
-    }
-)
 
 
 @dataclass(frozen=True)
@@ -70,30 +57,18 @@ class Violation:
         return f"[{self.check}] {self.message}"
 
 
-def run_all(
-    resume: TailoredResume,
-    profile: Profile,
-    posting_vocabulary: set[str] | None = None,
-) -> list[Violation]:
-    """Run every check. `posting_vocabulary` is what the *rationale* may also name.
-
-    The rationale explains how the candidate matches this posting, so it legitimately
-    mentions the target company and role. A live run rejected a perfectly good
-    rationale for naming "Account Executive" — the job being applied to. The resume
-    itself gets no such licence: its summary and bullets may only draw on the profile.
-    """
+def run_all(resume: TailoredResume, profile: Profile) -> list[Violation]:
+    """Run every check. An empty list means the draft is accepted."""
     index = ProfileIndex(profile)
     violations: list[Violation] = []
     for check in (
         check_references,
         check_bullet_traceability,
+        check_numbers,
         check_skills,
         check_dates,
     ):
         violations.extend(check(resume, index))
-    violations.extend(
-        check_forbidden_content(resume, index, posting_vocabulary or set())
-    )
     return violations
 
 
@@ -196,18 +171,8 @@ def check_bullet_traceability(
     removed that mismatch — they are the same length as experience bullets now — and the
     special case went with it.
     """
-    pairs = [
-        (bullet, index.bullet(bullet.source))
-        for experience in resume.experiences
-        for bullet in experience.bullets
-    ] + [
-        (bullet, index.project_bullet(bullet.source))
-        for project in resume.projects
-        for bullet in project.bullets
-    ]
-
     violations = []
-    for bullet, source in pairs:
+    for bullet, source in _sourced_bullets(resume, index):
         if source is None:
             continue  # already reported by check_references
 
@@ -225,15 +190,61 @@ def check_bullet_traceability(
     return violations
 
 
+def check_numbers(resume: TailoredResume, index: ProfileIndex) -> list[Violation]:
+    """Every figure asserted must be a figure the candidate actually recorded.
+
+    This is the check traceability cannot do. "Reduced payment errors by 86%" rewritten
+    from a bullet saying "from 2.1% to 0.3%" keeps almost every meaningful word, so word
+    overlap waves it through — and 86% is a claim the candidate never made, arrived at
+    by arithmetic the model performed on their behalf. An inflated metric is the single
+    most damaging thing a tailored resume can carry, because it is the one a reference
+    check disproves outright.
+
+    A bullet's figures are checked against **its own source bullet**, not the profile at
+    large. A number lifted from a sibling bullet is a mixed claim even though both
+    bullets are real. The summary has no single source, so it is checked against every
+    figure in the profile — the same known weakness `check_dates` documents for years.
+    """
+    violations = []
+    for bullet, source in _sourced_bullets(resume, index):
+        if source is None:
+            continue  # already reported by check_references
+        for number in sorted(numbers_in(bullet.text) - numbers_in(source)):
+            violations.append(
+                Violation(
+                    "metrics",
+                    f"bullet {bullet.source!r} claims {number!r}, which is not in the "
+                    f"bullet it was rewritten from. Keep the original's figures or "
+                    f"leave them out. Original: {source!r}",
+                )
+            )
+
+    for number in sorted(numbers_in(resume.summary) - index.numbers):
+        violations.append(
+            Violation(
+                "metrics",
+                f"the summary claims {number!r}, which appears nowhere in the profile",
+            )
+        )
+    return violations
+
+
 def check_skills(resume: TailoredResume, index: ProfileIndex) -> list[Violation]:
-    """A set-membership test, not a judgement call."""
+    """A skill must be one the candidate claims somewhere — not necessarily a skill row.
+
+    Surfacing a buried skill is the legitimate core of tailoring: a technology named in
+    a project's stack or worked into a bullet is something the candidate genuinely did,
+    and requiring it to have been typed a second time under Settings rejected honest
+    output. Introducing one because the posting asked for it is still fabrication, and
+    still caught — the profile's own text is the whole of what is allowed.
+    """
     return [
         Violation(
             "skills",
-            f"skill {skill!r} is not in the profile",
+            f"skill {skill!r} does not appear anywhere in the profile",
         )
         for skill in resume.skills
-        if _normalize(skill) not in index.skills
+        if not index.mentions(skill)
     ]
 
 
@@ -248,11 +259,10 @@ def check_dates(resume: TailoredResume, index: ProfileIndex) -> list[Violation]:
     2021-2024 is a shifted date, even though 2015 is a real year elsewhere in the
     profile (a degree, say). Checking against the whole profile would wave it through.
 
-    The summary, the rationale and project descriptions have no such context, so they are
-    checked against every year the profile contains. **A shifted date in the summary that
-    happens to land on another real profile year is not caught** — a known limit of a
-    context-free set membership test, and the reason the bullet-level check is scoped
-    tighter.
+    The summary has no such context, so it is checked against every year the profile
+    contains. **A shifted date in the summary that happens to land on another real
+    profile year is not caught** — a known limit of a context-free set membership test,
+    and the reason the bullet-level check is scoped tighter.
     """
     violations = []
     this_year = date.today().year
@@ -273,65 +283,6 @@ def check_dates(resume: TailoredResume, index: ProfileIndex) -> list[Violation]:
                     )
                 )
     return violations
-
-
-def check_forbidden_content(
-    resume: TailoredResume,
-    index: ProfileIndex,
-    posting_vocabulary: set[str] | None = None,
-) -> list[Violation]:
-    """LLM tics, and organisation names the profile has never heard of.
-
-    The proper-noun half is **best effort**. It catches "led engineering at Northwind
-    Systems" when Northwind isn't in the profile, but free-text organisation invention
-    is not fully solvable by string matching, and this will both miss cases and
-    occasionally flag an innocent capitalised phrase. The real defence is structural:
-    the model has no field in which to write an employer. This is a second net, not the
-    first one.
-    """
-    violations = []
-    # Only the rationale may name the posting; the resume itself may not.
-    rationale_extra = posting_vocabulary or set()
-
-    for label, text in _free_text(resume):
-        allowed = index.vocabulary | (
-            rationale_extra if label == "the rationale" else set()
-        )
-        lowered = text.lower()
-        for phrase in FORBIDDEN_PHRASES:
-            if phrase in lowered:
-                violations.append(
-                    Violation("style", f"{label} contains the phrase {phrase!r}")
-                )
-
-        for match in PROPER_PHRASE.finditer(text):
-            phrase = match.group(1)
-            if _phrase_allowed(phrase, allowed):
-                continue
-            violations.append(
-                Violation(
-                    "fabrication",
-                    f"{label} names {phrase!r}, which is not in the profile",
-                )
-            )
-    return violations
-
-
-def _phrase_allowed(phrase: str, allowed: set[str]) -> bool:
-    """Whether a capitalised phrase, or any suffix of it, is known.
-
-    Suffixes matter because a sentence-initial word gets swept into the match: "The
-    Account Executive role..." captures "The Account Executive", which is not in any
-    vocabulary even though "Account Executive" is. Trying each suffix strips the
-    incidental leading words without loosening the check — an invented name still
-    matches nothing at any offset.
-    """
-    tokens = phrase.split()
-    for start in range(len(tokens)):
-        candidate = _normalize(" ".join(tokens[start:]))
-        if candidate and (candidate in allowed or candidate in _PROPER_ALLOWLIST):
-            return True
-    return False
 
 
 def overlap_ratio(rewrite: str, source: str) -> float:
@@ -357,24 +308,23 @@ def _content_words(text: str) -> set[str]:
     return {word for word in _WORD.findall(text.lower()) if word not in STOPWORDS}
 
 
-def _normalize(value: str) -> str:
-    return " ".join(_WORD.findall(value.lower()))
+def _sourced_bullets(
+    resume: TailoredResume, index: ProfileIndex
+) -> list[tuple[TailoredBullet, str | None]]:
+    """Every rewritten bullet paired with the original text it cites.
 
-
-def _free_text(resume: TailoredResume) -> list[tuple[str, str]]:
-    """Every field the model wrote freely, labelled for error messages."""
-    texts = [("the summary", resume.summary), ("the rationale", resume.rationale)]
-    texts += [
-        (f"bullet {bullet.source}", bullet.text)
+    Shared by the two checks that compare a rewrite against its source, so they cannot
+    disagree about which bullets those are.
+    """
+    return [
+        (bullet, index.bullet(bullet.source))
         for experience in resume.experiences
         for bullet in experience.bullets
-    ]
-    texts += [
-        (f"project bullet {bullet.source}", bullet.text)
+    ] + [
+        (bullet, index.project_bullet(bullet.source))
         for project in resume.projects
         for bullet in project.bullets
     ]
-    return texts
 
 
 def _dated_text(
@@ -383,8 +333,7 @@ def _dated_text(
     """Free text paired with the years each piece is allowed to mention."""
     everywhere = index.years
     items: list[tuple[str, str, set[int]]] = [
-        ("the summary", resume.summary, everywhere),
-        ("the rationale", resume.rationale, everywhere),
+        ("the summary", resume.summary, everywhere)
     ]
 
     for experience in resume.experiences:

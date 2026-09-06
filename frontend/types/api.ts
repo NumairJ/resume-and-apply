@@ -281,8 +281,6 @@ export interface GenerateResumeResponse {
   resume_id: string;
   application_id: string;
   resume: GeneratedResume;
-  /** Shown on the Apply page as "why these bullets". Not persisted server-side. */
-  rationale: string;
   provider: string;
   model: string;
   prompt_version: string;

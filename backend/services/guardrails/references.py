@@ -1,4 +1,4 @@
-"""Reference labels, and the index that resolves them.
+"""Reference labels, the index that resolves them, and the comparisons the checks use.
 
 The labelling scheme lives here and **only** here. The prompt renderer and the guardrail
 chain both import it, so the labels the model is shown are by construction the same
@@ -12,27 +12,37 @@ like fabrication.
 
 Labels are 1-based because they appear in a prompt, and a model reading "E0" as the
 first item is an avoidable stumble.
+
+The other half of this module is the profile's own text, folded for comparison. Two
+checks ask questions of it — "is this skill something the candidate actually claims?"
+and "is this figure one they actually recorded?" — and both are answered against what
+the user wrote rather than against a curated list, because a curated list is exactly
+what kept rejecting their own words.
 """
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import date
+from decimal import Decimal, InvalidOperation
 
 from schemas.profile import ExperienceRead, Profile, ProjectRead
 
-_WORD = re.compile(r"[a-z0-9]+")
+_NON_ALNUM = re.compile(r"[^a-z0-9]+")
 
-# Two or more consecutive capitalised words: the shape of an organisation name.
-#
-# Lives here rather than in `checks.py` because both sides need it — this module *mines*
-# the profile's own free text for known phrases, and `checks.py` *scans* generated text
-# for unknown ones. One pattern, so the two cannot disagree about what a phrase is.
-#
-# The joiner is horizontal whitespace, never `\s+`. A newline is a sentence boundary, not
-# a word gap: with `\s+`, a description reading "…built with Bootstrap\nBuilt a REST API…"
-# yields the phrase "Bootstrap Built", which nobody wrote and which therefore matches
-# nothing in any vocabulary. Real profiles are full of such line breaks.
-PROPER_PHRASE = re.compile(r"\b([A-Z][\w&.-]*(?:[^\S\r\n]+[A-Z][\w&.-]*)+)")
+# A figure with optional currency mark, thousands separators, decimals, and a magnitude
+# or unit suffix: 40%, 1.2M, $500k, 3x, 12,000.
+_NUMERIC = re.compile(r"\$?\d[\d,]*(?:\.\d+)?\s*(?:%|[kKmMbB]\b|[xX]\b)?")
+
+_MAGNITUDES = {"k": 1_000, "m": 1_000_000, "b": 1_000_000_000}
+
+# Figures that assert nothing on their own, excluded so the metric check stays signal.
+# Small counts turn up incidentally ("2 of the 3 services"), and four-digit years belong
+# to `check_dates`, which knows the range each claim may fall in — reporting them here
+# too would raise two violations for one mistake and hand the model a contradictory
+# retry note.
+_TRIVIAL = frozenset(str(n) for n in range(0, 11))
+_YEAR_VALUE = re.compile(r"^(19|20)\d{2}$")
 
 
 def experience_label(index: int) -> str:
@@ -51,6 +61,58 @@ def project_bullet_label(project_index: int, bullet_index: int) -> str:
     return f"{project_label(project_index)}B{bullet_index + 1}"
 
 
+def fold(value: str) -> str:
+    """Lowercase, strip accents, collapse everything else to single spaces.
+
+    Accent stripping is not cosmetic here. The old normaliser kept only `[a-z0-9]`, so
+    "Pokémon" became "pok mon" and a résumé spelling it "Pokemon" compared unequal to
+    the profile's own project name. Decomposing first and dropping the combining marks
+    makes the two the same string.
+    """
+    decomposed = unicodedata.normalize("NFKD", value or "")
+    stripped = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    return _NON_ALNUM.sub(" ", stripped.lower()).strip()
+
+
+def numbers_in(text: str) -> set[str]:
+    """Every non-trivial figure in `text`, normalised for comparison."""
+    found = set()
+    for match in _NUMERIC.finditer(text or ""):
+        value = _normalize_number(match.group())
+        if value and value not in _TRIVIAL and not _YEAR_VALUE.match(value):
+            found.add(value)
+    return found
+
+
+def _normalize_number(token: str) -> str:
+    """`$1,200.00` and `1200` compare equal, and so do `40,000` and `40k`.
+
+    Magnitude suffixes are expanded rather than kept as text, which is the one place
+    this departs from the reference implementation it came from. Leaving "40k" as "40k"
+    would flag a rewrite that merely shortened a figure the user really did record as
+    "40,000" — a false rejection of exactly the tightening tailoring is meant to do.
+
+    `%` and `x` are units, not magnitudes, so they stay: "40%" is not the figure "40".
+    """
+    token = token.strip().lower().replace(",", "").replace("$", "").replace(" ", "")
+    for unit in ("%", "x"):
+        if token.endswith(unit):
+            return _trim(token[:-1]) + unit
+    for suffix, factor in _MAGNITUDES.items():
+        if token.endswith(suffix):
+            try:
+                return _trim(f"{Decimal(token[:-1]) * factor:f}")
+            except InvalidOperation:
+                return token
+    return _trim(token)
+
+
+def _trim(number: str) -> str:
+    if "." in number:
+        number = number.rstrip("0").rstrip(".")
+    return number or "0"
+
+
 @dataclass
 class ProfileIndex:
     """Everything the checks need to answer "is this in the profile?" quickly."""
@@ -60,9 +122,9 @@ class ProfileIndex:
     _bullets: dict[str, str] = field(default_factory=dict)
     _projects: dict[str, ProjectRead] = field(default_factory=dict)
     _project_bullets: dict[str, str] = field(default_factory=dict)
-    skills: set[str] = field(default_factory=set)
     years: set[int] = field(default_factory=set)
-    vocabulary: set[str] = field(default_factory=set)
+    numbers: set[str] = field(default_factory=set)
+    corpus: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         for position, experience in enumerate(self.profile.experiences):
@@ -77,59 +139,50 @@ class ProfileIndex:
                     project_bullet_label(position, bullet_position)
                 ] = bullet.text
 
-        self.skills = {_normalize(skill.name) for skill in self.profile.skills}
-
         for start, end in self._date_pairs():
             for value in (start, end):
                 if value:
                     self.years.add(value.year)
 
-        # Proper nouns the profile legitimately contains, so the fabrication check has
-        # something to measure against.
-        self.vocabulary = {
-            _normalize(value)
-            for value in [
-                self.profile.full_name,
-                *(e.company for e in self.profile.experiences),
-                *(e.title for e in self.profile.experiences),
-                *(e.school for e in self.profile.education),
-                *(e.degree for e in self.profile.education),
-                *(e.field_of_study or "" for e in self.profile.education),
-                *(p.name for p in self.profile.projects),
-                *(s.name for s in self.profile.skills),
-                *(link.label for link in self.profile.links),
-            ]
-            if value
-        }
+        texts = self._profile_text()
+        self.corpus = [folded for folded in (fold(text) for text in texts) if folded]
+        self.numbers = {number for text in texts for number in numbers_in(text)}
 
-        # And the proper nouns the user wrote in their own free text.
-        #
-        # Names alone were not enough, and the gap was not theoretical: a live run was
-        # rejected three times for "naming" RESTful API, Team Builder and Convolutional
-        # Neural Network — every one of them typed by the user into their own bullets and
-        # project bullets. The check was calling the profile's own words invented.
-        #
-        # Phrases, never loose words. Adding the individual tokens would let a model
-        # recombine "Northwind" from one bullet and "Systems" from another into an
-        # employer nobody has ever worked for, which is the exact failure this check
-        # exists to catch. Reusing a phrase the user actually typed is not fabrication;
-        # assembling a new one from their vocabulary would be.
-        self.vocabulary |= {
-            _normalize(match.group(1))
-            for text in self._authored_text()
-            for match in PROPER_PHRASE.finditer(text)
-        }
+    def _profile_text(self) -> list[str]:
+        """Every string the profile contains, kept as separate fields on purpose.
 
-    def _authored_text(self) -> list[str]:
-        """Every free-text field the user wrote themselves and the model is shown."""
+        Joining them into one document would let a phrase match across the seam between
+        two unrelated rows — a project called "Portfolio Site" followed by a stack
+        beginning "Next.js" would make "Site Next" findable. Each field is matched whole.
+        """
         return [
+            self.profile.full_name,
             self.profile.summary or "",
+            *(e.company for e in self.profile.experiences),
+            *(e.title for e in self.profile.experiences),
+            *(e.location or "" for e in self.profile.experiences),
             *self._bullets.values(),
+            *(e.school for e in self.profile.education),
+            *(e.degree for e in self.profile.education),
+            *(e.field_of_study or "" for e in self.profile.education),
+            *(s.name for s in self.profile.skills),
+            *(p.name for p in self.profile.projects),
+            *(p.tech_stack or "" for p in self.profile.projects),
             *self._project_bullets.values(),
-            # The stack is user-authored too, and the model is shown it — so a summary
-            # that mentions "Node.js, Express" must not read as fabrication.
-            *(project.tech_stack or "" for project in self.profile.projects),
+            *(link.label for link in self.profile.links),
         ]
+
+    def mentions(self, value: str) -> bool:
+        """Whether the candidate wrote `value` anywhere in their own profile.
+
+        Matched on whole words, not raw substring: "Go" must appear as the word Go, or
+        every profile mentioning Django would be taken to claim it.
+        """
+        folded = fold(value)
+        if not folded:
+            return False
+        needle = f" {folded} "
+        return any(needle in f" {text} " for text in self.corpus)
 
     def experience(self, label: str) -> ExperienceRead | None:
         return self._experiences.get(label)
@@ -158,7 +211,3 @@ class ProfileIndex:
             *((e.start_date, e.end_date) for e in self.profile.education),
             *((p.start_date, p.end_date) for p in self.profile.projects),
         ]
-
-
-def _normalize(value: str) -> str:
-    return " ".join(_WORD.findall(value.lower()))

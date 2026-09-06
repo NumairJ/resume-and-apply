@@ -15,7 +15,7 @@ from schemas.resume import (
     TailoredResume,
 )
 from services import tailoring
-from services.guardrails import GuardrailFailure
+from services.guardrails import GuardrailFailure, Violation
 from services.llm.fake import FakeLLMProvider
 from tests.factories import broken_resume, valid_resume
 
@@ -85,7 +85,7 @@ def test_prompt_includes_the_posting_and_the_profile(profile, posting) -> None:
     assert "Northwind Systems" in prompt
     assert "Python" in prompt
     # The template's own instructions survived formatting.
-    assert "rationale" in prompt
+    assert "Never introduce a figure" in prompt
 
 
 def test_prompt_lists_each_skill_on_its_own_line(profile, posting) -> None:
@@ -117,7 +117,7 @@ def test_clean_first_attempt_returns_immediately(profile, posting) -> None:
 
     assert result.attempts == 1
     assert len(provider.prompts) == 1
-    assert result.rationale
+    assert result.resume.experiences
 
 
 def test_violations_are_fed_back_and_a_clean_retry_succeeds(profile, posting) -> None:
@@ -128,6 +128,19 @@ def test_violations_are_fed_back_and_a_clean_retry_succeeds(profile, posting) ->
     # The retry has to name the problem; "try again" produces the same output.
     assert "Kubernetes" in provider.prompts[1]
     assert "rejected by automated validation" in provider.prompts[1]
+
+
+def test_the_retry_note_stops_after_twenty_problems() -> None:
+    """A draft that goes badly wrong goes wrong everywhere — one mis-cited experience
+    takes all of its bullets down with it. The retry prompt is the whole base prompt
+    plus this note, so an uncapped list is input tokens spent restating one mistake.
+    """
+    note = tailoring._retry_note(
+        [Violation("references", f"bullet 'E1B{n}' is not in the profile") for n in range(30)]
+    )
+
+    assert note.count("is not in the profile") == tailoring.MAX_LISTED_VIOLATIONS
+    assert "...and 10 more." in note
 
 
 def test_a_rejected_attempt_is_logged_before_the_retry(profile, posting, caplog) -> None:

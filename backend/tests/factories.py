@@ -49,19 +49,24 @@ def sample_profile() -> Profile:
                 end_date=date(2024, 6, 1),
                 position=0,
                 bullets=[
+                    # Both carry figures, because the metric check is only honestly
+                    # tested against a profile that records some — and the two are
+                    # deliberately different, so a number borrowed from the sibling
+                    # bullet is detectable as such.
                     ExperienceBulletRead(
                         id=_uuid(),
                         position=0,
                         text=(
-                            "Reduced payment service error rates by hardening the "
-                            "retry path"
+                            "Reduced payment service error rates from 2.1% to 0.3% by "
+                            "hardening the retry path"
                         ),
                     ),
                     ExperienceBulletRead(
                         id=_uuid(),
                         position=1,
                         text=(
-                            "Migrated the billing database to Postgres with no downtime"
+                            "Migrated the billing database to Postgres with no "
+                            "downtime for 40,000 accounts"
                         ),
                     ),
                 ],
@@ -101,10 +106,9 @@ def sample_profile() -> Profile:
             ProjectRead(
                 id=_uuid(),
                 name="Portfolio Site",
-                # Carries "RESTful API" — a proper noun that is not a skill — because a
-                # live run was refused three times for "naming" exactly that kind of
-                # phrase out of the user's own bullets. The fabrication check is only
-                # honestly tested against a fixture that contains one.
+                # Docker is in the stack and *not* in the skills rows, which is what
+                # makes skill promotion testable: it is something the candidate plainly
+                # claims, entered once rather than twice.
                 tech_stack="Next.js, Postgres, Docker",
                 bullets=[
                     ProjectBulletRead(
@@ -140,10 +144,6 @@ def sample_profile() -> Profile:
 def valid_resume() -> TailoredResume:
     """Output that should pass: real references, faithful rewrites, real skills."""
     return TailoredResume(
-        rationale=(
-            "The posting asks for payments reliability and Postgres depth, both of "
-            "which show up directly in the most recent role."
-        ),
         summary="Software engineer focused on payment reliability and databases.",
         experiences=[
             TailoredExperience(

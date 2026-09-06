@@ -162,10 +162,11 @@ def generate(client: TestClient, seeded: dict, responses=None) -> dict:
     return response.json()
 
 
-def test_generate_returns_resume_and_rationale(client: TestClient, seeded: dict) -> None:
+def test_generate_returns_the_resume_and_what_produced_it(
+    client: TestClient, seeded: dict
+) -> None:
     body = generate(client, seeded)
 
-    assert body["rationale"]
     assert body["attempts"] == 1
     # The version in force, not a literal: what matters is that the response reports the
     # prompt the resume was actually made with, so a bump doesn't make this a lie.

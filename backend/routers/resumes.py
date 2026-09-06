@@ -84,7 +84,6 @@ def generate_resume(
         resume_id=generated.row.id,
         application_id=generated.row.application_id,
         resume=generated.result.resume,
-        rationale=generated.result.rationale,
         provider=provider.name,
         model=getattr(provider, "model", ""),
         prompt_version=tailoring.PROMPT_VERSION,

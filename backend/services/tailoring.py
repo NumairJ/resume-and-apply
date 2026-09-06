@@ -1,7 +1,6 @@
 """Resume tailoring: render the prompt, generate, validate, retry, assemble."""
 
 import logging
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,7 +25,7 @@ from services.guardrails import (
 from services.guardrails.references import ProfileIndex
 from services.llm.base import LLMProvider
 
-PROMPT_VERSION = "tailor_resume.v3"
+PROMPT_VERSION = "tailor_resume.v4"
 PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / f"{PROMPT_VERSION}.md"
 
 # One initial attempt plus this many retries. Named rather than inlined because "up to
@@ -54,7 +53,6 @@ logger = logging.getLogger(__name__)
 @dataclass
 class TailoringResult:
     resume: Resume
-    rationale: str
     attempts: int
 
 
@@ -73,15 +71,11 @@ def generate(
 
     for attempt in range(1, MAX_RETRIES + 2):
         tailored = provider.generate_structured(prompt, TailoredResume)
-        violations = guardrails.run_all(
-            tailored, profile, posting_vocabulary=posting_vocabulary(posting)
-        )
+        violations = guardrails.run_all(tailored, profile)
 
         if not violations:
             return TailoringResult(
-                resume=assemble(tailored, profile),
-                rationale=tailored.rationale,
-                attempts=attempt,
+                resume=assemble(tailored, profile), attempts=attempt
             )
 
         logger.info(
@@ -95,23 +89,6 @@ def generate(
         prompt = f"{base_prompt}\n\n{_retry_note(violations)}"
 
     raise guardrails.GuardrailFailure(violations, attempts=MAX_RETRIES + 1)
-
-
-def posting_vocabulary(posting: JobPosting) -> set[str]:
-    """Proper nouns the rationale may name because they belong to the target job.
-
-    The rationale's job is to compare the candidate to *this* posting, so naming the
-    hiring company and the role is correct, not fabrication.
-    """
-    return {
-        _normalize(value)
-        for value in (posting.company, posting.title, posting.location)
-        if value
-    }
-
-
-def _normalize(value: str) -> str:
-    return " ".join(re.findall(r"[a-z0-9]+", value.lower()))
 
 
 def build_prompt(profile: Profile, posting: JobPosting) -> str:
@@ -270,8 +247,18 @@ def assemble(tailored: TailoredResume, profile: Profile) -> Resume:
     )
 
 
+# A draft that goes badly wrong goes wrong everywhere — a mis-cited experience takes all
+# of its bullets down with it — and the retry prompt is the base prompt plus this note.
+# Twenty named problems are more than enough for the model to work from; the rest would
+# be input tokens spent restating the same mistake.
+MAX_LISTED_VIOLATIONS = 20
+
+
 def _retry_note(violations: list[Violation]) -> str:
-    listed = "\n".join(f"- {violation}" for violation in violations)
+    lines = [f"- {violation}" for violation in violations[:MAX_LISTED_VIOLATIONS]]
+    if len(violations) > MAX_LISTED_VIOLATIONS:
+        lines.append(f"- ...and {len(violations) - MAX_LISTED_VIOLATIONS} more.")
+    listed = "\n".join(lines)
     return (
         "Your previous answer was rejected by automated validation for these reasons:\n"
         f"{listed}\n\n"

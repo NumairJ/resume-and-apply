@@ -10,7 +10,7 @@ in this schema, because there is no field to put one in.
 `Resume*` is what the **server assembles** afterwards, filling every factual field from
 the profile rows the labels resolved to. So the facts on the finished resume come from
 the database by construction, and the guardrails only have to police the free text that
-is left: bullets, the summary, and the rationale.
+is left: the bullets and the summary.
 """
 
 import uuid
@@ -53,12 +53,12 @@ class TailoredResume(BaseModel):
     reading as fabrication when it was really a transcription slip.
     """
 
-    rationale: str = Field(
-        description=(
-            "Which of the candidate's experience overlaps the posting's requirements, "
-            "and why these bullets were chosen. Written before the resume itself."
-        )
-    )
+    # There is no `rationale` field, and its absence is deliberate. It once asked for
+    # three to five sentences explaining the selection, on every attempt including every
+    # retry, as a "reason before you answer" scaffold. The provider runs with adaptive
+    # thinking, so the model reasons regardless, and the retry loop already tells it
+    # exactly what a rejected draft got wrong. It was output tokens spent on prose that
+    # was never printed on the resume.
     summary: str = Field(description="A short professional summary for this posting")
     experiences: list[TailoredExperience] = []
     projects: list[TailoredProject] = []
@@ -128,9 +128,6 @@ class GenerateResumeResponse(BaseModel):
     resume_id: uuid.UUID
     application_id: uuid.UUID
     resume: Resume
-    # Surfaced on the Apply page as "why these bullets". Deliberately not stored — the
-    # response carries it, and what the UI needs beyond that is a Phase 7 question.
-    rationale: str
     provider: str
     model: str
     prompt_version: str

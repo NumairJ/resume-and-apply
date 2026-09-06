@@ -197,9 +197,11 @@ test("paste a posting, generate a resume, track it, download the PDF", async ({
   const preview = page.locator('iframe[title="Resume preview"]');
   await expect(preview).toBeVisible({ timeout: 240_000 });
 
-  // The rationale is the model's account of what it chose, and the Apply page's
-  // reason for existing over a plain "download".
-  await expect(page.getByText("Why these bullets")).toBeVisible();
+  // The footer records what produced this file — the model, the prompt version, and
+  // whether validation rejected a draft on the way. It replaced a "why these bullets"
+  // panel written by the model, which cost output tokens on every attempt to explain a
+  // page that is right there to read.
+  await expect(page.getByText("Attempts")).toBeVisible();
 
   // The preview is the literal document WeasyPrint printed, so the seeded employer
   // has to appear inside the iframe rather than merely on the page around it.

@@ -106,9 +106,9 @@ is decidable:
 |---|---|
 | Reference integrity | A label resolving to no profile row — which is what an invented employer looks like in this schema |
 | Bullet traceability | A rewrite sharing too few meaningful words with the source bullet it cites |
-| Skill membership | A skill absent from the profile — a set operation, not a judgement |
+| Metric integrity | A figure that is not in the bullet being rewritten — including one computed from it, or borrowed from a sibling |
+| Skill membership | A skill the profile's own text never claims — a whole-word match, not a judgement |
 | Date sanity | A year in prose that the claiming experience's own date range does not cover, and any future date |
-| Forbidden content | Known LLM tics, and capitalised organisation-shaped phrases the profile has never heard of |
 
 Violations are fed back into a retry naming exactly what was wrong, up to two attempts, and a
 generation that still fails surfaces as a `422` listing the violations rather than returning bad
@@ -116,9 +116,22 @@ output. The guardrail suite is the most valuable test set in the repo: it is fed
 fabricated résumés and must reject every one — *and* must accept a legitimately rephrased bullet,
 without which it could be trivially rejecting everything and still look green.
 
-One check is honestly weaker than the others and is documented as such in the code: matching
-capitalised phrases against profile vocabulary is best-effort, will miss cases and will
-occasionally flag an innocent phrase. It is a second net. The structural design above is the first.
+### What is deliberately *not* checked
+
+A sixth check used to scan free text for capitalised phrases and reject any the profile had never
+used. It was the only check that ever produced a false rejection, and it produced them constantly: a
+single live run was refused three times for "naming" *RESTful API*, *Team Builder* and *Convolutional
+Neural Network*, every one of them typed by the user into their own bullets. Ordinary capitalised
+English is not distinguishable from an invented employer by string matching, so widening the
+vocabulary only moved the next false positive further out.
+
+It is gone, and the cost is worth stating plainly: **a summary reading "previously at Goldman Sachs"
+is not caught.** What holds instead is the structural design above — there is no field in which the
+model can write an employer, so an invented one cannot become a job on the résumé — plus
+traceability, which anchors every bullet to a specific source, and the metric check, which closes
+the gap that actually damages people. An inflated number is both the most persuasive thing a
+fabricated résumé can carry and the easiest to disprove; a stray proper noun in a summary the
+candidate reads before applying is neither.
 
 ### Experience bullets are their own table
 
