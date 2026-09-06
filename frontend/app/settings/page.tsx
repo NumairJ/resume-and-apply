@@ -2,7 +2,16 @@
 
 import { useState } from "react";
 
-import { education, experiences, links, profile, projects, skills } from "@/lib/api";
+import {
+  education,
+  experienceBullets,
+  experiences,
+  links,
+  profile,
+  projectBullets,
+  projects,
+  skills,
+} from "@/lib/api";
 import { dateRange } from "@/lib/format";
 import { keys, useInvalidatingMutation, useProfile } from "@/lib/queries";
 import { BulletEditor } from "@/components/BulletEditor";
@@ -104,7 +113,14 @@ function Sections({ profile: data }: { profile: Profile }) {
             </Field>
           </>
         )}
-        nested={(item) => <BulletEditor experience={item} />}
+        nested={(item) => (
+          <BulletEditor
+            parentId={item.id}
+            parentLabel={item.company}
+            bullets={item.bullets}
+            api={experienceBullets}
+          />
+        )}
       />
 
       <ProfileSection
@@ -220,9 +236,10 @@ function Sections({ profile: data }: { profile: Profile }) {
         items={data.projects}
         collection={projects}
         addLabel="Add project"
+        description="Project bullets are selected and rephrased exactly like experience bullets."
         blank={() => ({
           name: "",
-          description: null,
+          tech_stack: null,
           url: null,
           start_date: null,
           end_date: null,
@@ -231,10 +248,19 @@ function Sections({ profile: data }: { profile: Profile }) {
         view={(item) => (
           <>
             <p className="font-medium">{item.name}</p>
-            {item.description && (
-              <p className="mt-0.5 text-sm text-muted">{item.description}</p>
+            {item.tech_stack && (
+              <p className="mt-0.5 text-sm text-muted">{item.tech_stack}</p>
             )}
           </>
+        )}
+        nested={(item) => (
+          <BulletEditor
+            parentId={item.id}
+            parentLabel={item.name}
+            bullets={item.bullets}
+            api={projectBullets}
+            placeholder="Built X with Y, achieving Z"
+          />
         )}
         form={(draft, set) => (
           <>
@@ -245,11 +271,14 @@ function Sections({ profile: data }: { profile: Profile }) {
                 onChange={(e) => set({ name: e.target.value })}
               />
             </Field>
-            <Field label="Description">
-              <Textarea
-                rows={2}
-                value={draft.description ?? ""}
-                onChange={(e) => set({ description: e.target.value || null })}
+            <Field
+              label="Tech stack"
+              hint="Copied onto the resume word for word, never rewritten."
+            >
+              <Input
+                value={draft.tech_stack ?? ""}
+                placeholder="React, Express, MongoDB"
+                onChange={(e) => set({ tech_stack: e.target.value || null })}
               />
             </Field>
             <Field label="URL">

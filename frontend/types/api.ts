@@ -58,14 +58,23 @@ export interface Education {
 export type EducationCreate = Omit<Education, "id">;
 export type EducationUpdate = Partial<EducationCreate>;
 
-export interface ExperienceBullet {
+/**
+ * One accomplishment line. Nothing about the shape says "experience", and projects now
+ * have bullets too — so this is `Bullet`, with the old names kept as aliases rather than
+ * a second identical interface cloned for projects.
+ */
+export interface Bullet {
   id: string;
   text: string;
   position: number;
 }
 
-export type ExperienceBulletCreate = Omit<ExperienceBullet, "id">;
-export type ExperienceBulletUpdate = Partial<ExperienceBulletCreate>;
+export type BulletCreate = Omit<Bullet, "id">;
+export type BulletUpdate = Partial<BulletCreate>;
+
+export type ExperienceBullet = Bullet;
+export type ExperienceBulletCreate = BulletCreate;
+export type ExperienceBulletUpdate = BulletUpdate;
 
 export interface Experience {
   id: string;
@@ -98,15 +107,21 @@ export type SkillUpdate = Partial<SkillCreate>;
 export interface Project {
   id: string;
   name: string;
-  description: string | null;
+  /** The technologies, as written. Copied onto the resume verbatim, never rewritten. */
+  tech_stack: string | null;
   url: string | null;
   start_date: string | null;
   end_date: string | null;
   position: number;
+  bullets: Bullet[];
 }
 
-export type ProjectCreate = Omit<Project, "id">;
-export type ProjectUpdate = Partial<ProjectCreate>;
+// Same split as Experience: bullets may be sent nested on create, but are edited through
+// their own routes afterwards, so the update type must not claim they are patchable here.
+export type ProjectCreate = Omit<Project, "id" | "bullets"> & {
+  bullets?: BulletCreate[];
+};
+export type ProjectUpdate = Partial<Omit<Project, "id" | "bullets">>;
 
 export interface Link {
   id: string;
@@ -236,10 +251,11 @@ export interface ResumeEducation {
 export interface ResumeProject {
   name: string;
   url: string | null;
+  /** Verbatim from the profile row — the model has no field in which to return it. */
+  tech_stack: string | null;
   start_date: string | null;
   end_date: string | null;
-  /** The model's rewrite, or null when the profile records no description to rewrite. */
-  description: string | null;
+  bullets: string[];
 }
 
 export interface ResumeLink {

@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { BulletEditor } from "@/components/BulletEditor";
 import { ProfileSection } from "@/components/ProfileSection";
-import { skills as skillsApi } from "@/lib/api";
+import { experienceBullets, projectBullets, skills as skillsApi } from "@/lib/api";
 import { profile, recorded } from "./msw/handlers";
 import { render } from "./render";
 import { Field, Input } from "@/components/ui";
@@ -205,11 +205,23 @@ describe("ProfileSection, grouped", () => {
 });
 
 describe("BulletEditor", () => {
+  const experience = profile.experiences[0];
+  const project = profile.projects[0];
+
   it("reorders bullets within their own experience", async () => {
     const user = userEvent.setup();
-    render(<BulletEditor experience={profile.experiences[0]} />);
+    render(
+      <BulletEditor
+        parentId={experience.id}
+        parentLabel={experience.company}
+        bullets={experience.bullets}
+        api={experienceBullets}
+      />,
+    );
 
-    await user.click(screen.getAllByRole("button", { name: /move bullet up/i })[1]);
+    await user.click(
+      screen.getAllByRole("button", { name: /move bullet up/i })[1],
+    );
 
     await waitFor(() => expect(recorded).toHaveLength(1));
     expect(recorded[0]).toMatchObject({
@@ -220,9 +232,68 @@ describe("BulletEditor", () => {
   });
 
   it("shows every bullet of the experience", () => {
-    render(<BulletEditor experience={profile.experiences[0]} />);
+    render(
+      <BulletEditor
+        parentId={experience.id}
+        parentLabel={experience.company}
+        bullets={experience.bullets}
+        api={experienceBullets}
+      />,
+    );
 
     expect(screen.getByText(/hardened the payment retry path/i)).toBeVisible();
     expect(screen.getByText(/migrated billing to postgres/i)).toBeVisible();
+  });
+
+  it("drives a project's bullets through the project routes", async () => {
+    const user = userEvent.setup();
+    render(
+      <BulletEditor
+        parentId={project.id}
+        parentLabel={project.name}
+        bullets={project.bullets}
+        api={projectBullets}
+      />,
+    );
+
+    await user.click(
+      screen.getAllByRole("button", { name: /move bullet up/i })[1],
+    );
+
+    await waitFor(() => expect(recorded).toHaveLength(1));
+    expect(recorded[0]).toMatchObject({
+      method: "PUT",
+      path: "/api/profile/projects/proj-1/bullets/order",
+      body: { ids: ["pb-2", "pb-1"] },
+    });
+  });
+
+  it("names its parent in every control, so two editors never collide", () => {
+    // Both render at once, as they do on the Settings page. A bare "Move bullet up"
+    // would match four buttons here — ambiguous to a test, and to anyone tabbing
+    // through with a screen reader.
+    render(
+      <>
+        <BulletEditor
+          parentId={experience.id}
+          parentLabel={experience.company}
+          bullets={experience.bullets}
+          api={experienceBullets}
+        />
+        <BulletEditor
+          parentId={project.id}
+          parentLabel={project.name}
+          bullets={project.bullets}
+          api={projectBullets}
+        />
+      </>,
+    );
+
+    expect(
+      screen.getAllByRole("button", { name: /move bullet up in Northwind Systems/i }),
+    ).toHaveLength(2);
+    expect(
+      screen.getAllByRole("button", { name: /move bullet up in Portfolio Site/i }),
+    ).toHaveLength(2);
   });
 });

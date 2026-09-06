@@ -111,11 +111,15 @@ export function ProfileSection<
 
   function startEdit(item: Read) {
     setEditing(item.id);
-    // Read rows carry `id` alongside the writable fields; it is dropped so it is never
-    // sent back in the body. Deleted from a copy rather than destructured out, because
-    // the discarded binding would just be an unused variable.
+    // Read rows carry `id` and, for experiences and projects, a whole `bullets` array
+    // alongside the writable fields. Both are dropped so neither is sent back in the
+    // body: bullets are edited through their own nested routes, and PATCHing them here
+    // only worked at all because Pydantic silently discards unknown fields. Deleted from
+    // a copy rather than destructured out, because the discarded bindings would just be
+    // unused variables.
     const body: Record<string, unknown> = { ...item };
     delete body.id;
+    delete body.bullets;
     setDraft(body as Create);
   }
 

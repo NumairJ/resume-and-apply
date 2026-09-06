@@ -101,7 +101,7 @@
 
   .summary { margin: 0; }
   .skills { margin: 0; }
-  .project-detail { margin: 2pt 0 0; }
+  .project-meta { margin: 2pt 0 0; color: #555; }
 </style>
 </head>
 <body>
@@ -161,11 +161,28 @@
   {% for project in resume.projects %}
   <div class="entry">
     <div class="entry-head">
-      <h3 class="role">{{ project.name }}</h3>
-      <span class="dates">{{ date_range(project.start_date, project.end_date) }}</span>
+      {# The name carries the link. The address still has to appear as *text* somewhere,
+         because an extractor reads visible text and never the href — so it takes the
+         right-hand slot, which for a project is usually empty anyway. When a project has
+         dates too they move down to the meta line, since a project is identified by its
+         link far more than by when it was built. #}
+      <h3 class="role">
+        {%- if project.url %}<a href="{{ project.url }}">{{ project.name }}</a>
+        {%- else %}{{ project.name }}{% endif -%}
+      </h3>
+      <span class="dates">
+        {%- if project.url %}{{ bare_url(project.url) }}
+        {%- else %}{{ date_range(project.start_date, project.end_date) }}{% endif -%}
+      </span>
     </div>
-    {% if project.description %}<p class="project-detail">{{ project.description }}</p>{% endif %}
-    {% if project.url %}<p class="project-detail"><a href="{{ project.url }}">{{ bare_url(project.url) }}</a></p>{% endif %}
+    {% set dates = date_range(project.start_date, project.end_date) if project.url else "" %}
+    {% set meta = [project.tech_stack, dates] | select | join(" · ") %}
+    {% if meta %}<p class="project-meta">{{ meta }}</p>{% endif %}
+    {% if project.bullets %}
+    <ul>
+      {% for bullet in project.bullets %}<li>{{ bullet }}</li>{% endfor %}
+    </ul>
+    {% endif %}
   </div>
   {% endfor %}
 </section>

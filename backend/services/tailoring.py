@@ -20,12 +20,13 @@ from services.guardrails import (
     Violation,
     bullet_label,
     experience_label,
+    project_bullet_label,
     project_label,
 )
 from services.guardrails.references import ProfileIndex
 from services.llm.base import LLMProvider
 
-PROMPT_VERSION = "tailor_resume.v2"
+PROMPT_VERSION = "tailor_resume.v3"
 PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / f"{PROMPT_VERSION}.md"
 
 # One initial attempt plus this many retries. Named rather than inlined because "up to
@@ -41,6 +42,7 @@ MAX_RETRIES = 2
 MAX_EXPERIENCES = 4
 MAX_BULLETS = 4
 MAX_PROJECTS = 3
+MAX_PROJECT_BULLETS = 3
 MAX_SKILLS = 14
 
 # Every rejected attempt is a whole extra model call. Logging them makes that cost, and
@@ -180,13 +182,22 @@ def render_profile(profile: Profile) -> str:
             lines.append(f"  {entry.degree}{field} — {entry.school}")
 
     if profile.projects:
-        # Labelled, like experiences. Before v2 these were listed unlabelled, which meant
-        # the model could read about a project and had no way to put one on the resume —
-        # they were prompt cost with no possible output.
+        # Labelled like experiences, right down to per-bullet labels. Before v2
+        # these were listed unlabelled, so the model could read about a project and
+        # had no way to put one on the resume - prompt cost with no possible output.
         lines.append("\n## Projects")
         for position, project in enumerate(profile.projects):
-            description = f": {project.description}" if project.description else ""
-            lines.append(f"  [{project_label(position)}] {project.name}{description}")
+            lines.append(f"\n[{project_label(position)}] {project.name}")
+            if project.tech_stack:
+                # Shown so rewrites lean on the right technologies. There is no
+                # field in which to return it - the server copies it from the row -
+                # so saying so here saves the model attempting one.
+                lines.append(f"  Tech (fixed, do not return): {project.tech_stack}")
+            for bullet_position, bullet in enumerate(project.bullets):
+                label = project_bullet_label(position, bullet_position)
+                lines.append(f"  [{label}] {bullet.text}")
+            if not project.bullets:
+                lines.append("  (no bullets recorded)")
 
     return "\n".join(lines)
 
@@ -195,8 +206,8 @@ def assemble(tailored: TailoredResume, profile: Profile) -> Resume:
     """Fill every factual field from the profile rows the labels resolved to.
 
     Nothing factual here comes from the model — it chose *which* rows, and rewrote
-    bullet and project text. That is why an invented employer is impossible rather than
-    merely detectable.
+    bullet and project-bullet text. That is why an invented employer is impossible
+    rather than merely detectable.
 
     This is also where the one-page budget is enforced, by slicing. The model was asked
     for the same limits and ordered its output by relevance, so the slice keeps what it
@@ -229,13 +240,10 @@ def assemble(tailored: TailoredResume, profile: Profile) -> Resume:
             ResumeProject(
                 name=source.name,
                 url=source.url,
+                tech_stack=source.tech_stack,
                 start_date=source.start_date,
                 end_date=source.end_date,
-                # The rewrite when there is one, nothing when there isn't. The profile's
-                # own description is not a fallback: the model was shown it and chose to
-                # leave it out, and quietly reinstating it would put untailored text on a
-                # tailored resume.
-                description=chosen.text.strip() or None,
+                bullets=[b.text for b in chosen.bullets[:MAX_PROJECT_BULLETS]],
             )
         )
 

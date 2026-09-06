@@ -104,32 +104,63 @@ def test_projects_reach_the_page() -> None:
 
     assert "<h2>Projects</h2>" in html
     assert "Portfolio Site" in html
-    # The model's rewrite, not the profile's own wording.
-    assert "deployed as a single container" in html
+    # The model's rewrite, as a bullet.
+    assert "<li>Personal site built with Next.js" in html
+    # Verbatim from the profile row, never rewritten.
+    assert "Next.js, Postgres, Docker" in html
+
+
+def test_the_project_name_carries_the_link() -> None:
+    """Asked for directly, and the reason the address moved to the right-hand slot."""
+    html = render.render_html(a_resume())
+
+    assert (
+        '<a href="https://dana.example/portfolio">Portfolio Site</a>' in html
+    )
+    # Still present as *text*, because an extractor reads visible text, never the href.
     assert "dana.example/portfolio" in html
-    assert "Apr 2022 - Sep 2022" in html
 
 
-def test_a_project_without_a_description_still_renders() -> None:
-    """Name and dates are the whole record for some projects, and that is a resume
-    entry — not a reason to drop it."""
+def test_dates_yield_the_right_hand_slot_to_the_address() -> None:
+    """Both exist on this fixture. A project is identified by its link far more than by
+    when it was built, so the address keeps the slot and the dates move to the meta line.
+    """
+    html = render.render_html(a_resume())
+    projects = html.split("Projects")[1].split("Education")[0]
+
+    assert "dana.example/portfolio</a></span>" not in projects  # not inside the <h3>
+    assert '<span class="dates">dana.example/portfolio</span>' in projects
+    assert "Apr 2022 - Sep 2022" in projects
+
+
+def test_a_project_with_nothing_but_a_name_still_renders() -> None:
+    """Name alone is the whole record for some projects, and that is a resume entry —
+    not a reason to drop it, and not a reason to invent filler."""
     resume = a_resume()
-    resume.projects = [ResumeProject(name="Portfolio Site", description=None, url=None)]
+    resume.projects = [ResumeProject(name="Crossword Solver")]
     html = render.render_html(resume)
+    projects = html.split("Projects")[1].split("Education")[0]
 
-    assert "Portfolio Site" in html
-    assert "None" not in html.split("Projects")[1].split("Education")[0]
+    assert "Crossword Solver" in projects
+    assert "None" not in projects
+    assert "<ul>" not in projects
 
 
 def test_project_text_is_escaped() -> None:
     resume = a_resume()
     resume.projects = [
-        ResumeProject(name="Smith & Co", description="<script>alert(1)</script>")
+        ResumeProject(
+            name="Smith & Co",
+            tech_stack="R&D tooling",
+            bullets=["<script>alert(1)</script>"],
+        )
     ]
     html = render.render_html(resume)
 
     assert "<script>alert(1)</script>" not in html
+    assert "&lt;script&gt;" in html
     assert "Smith &amp; Co" in html
+    assert "R&amp;D tooling" in html
 
 
 # --- ATS legibility ---------------------------------------------------------

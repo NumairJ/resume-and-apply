@@ -82,19 +82,28 @@ async function seedProfile(api: APIRequestContext) {
   expect(experience.ok(), await experience.text()).toBeTruthy();
   created.experienceId = (await experience.json()).id;
 
-  // A project too, so the run actually exercises the P-label path: the model has to
-  // cite `P1` and rewrite this description, and the server has to fill the name, URL and
-  // dates from this row. Without one seeded, the model cites no project and the whole
-  // Projects section would go untested by the only test that talks to a real model.
+  // A project too, so the run exercises the P-label path: the model has to cite `P1`,
+  // rewrite `P1B1`/`P1B2`, and leave the name, URL, dates and tech stack to the server.
+  // Without one seeded the model cites no project, and the whole Projects section goes
+  // untested by the only test that talks to a real model.
   const project = await api.post("/api/profile/projects", {
     data: {
       name: "Ledger Reconciler",
-      description:
-        "Open-source tool that reconciles double-entry ledgers against bank exports, written in Python with a Postgres store",
+      tech_stack: "Python, Postgres, Docker",
       url: "https://github.com/example/ledger-reconciler",
       start_date: "2023-01-01",
       end_date: "2023-08-01",
       position: 0,
+      bullets: [
+        {
+          text: "Reconciled double-entry ledgers against bank exports, catching mismatches a manual review missed",
+          position: 0,
+        },
+        {
+          text: "Backed the matcher with a Postgres store and indexed lookups, cutting a full reconciliation to seconds",
+          position: 1,
+        },
+      ],
     },
   });
   expect(project.ok(), await project.text()).toBeTruthy();
@@ -205,6 +214,10 @@ test("paste a posting, generate a resume, track it, download the PDF", async ({
   ).toBeVisible();
   await expect(
     preview.contentFrame().getByText("github.com/example/ledger-reconciler"),
+  ).toBeVisible();
+  // Verbatim from the profile row — the model has no field in which to return it.
+  await expect(
+    preview.contentFrame().getByText("Python, Postgres, Docker"),
   ).toBeVisible();
 
   await expect(

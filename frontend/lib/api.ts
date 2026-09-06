@@ -18,9 +18,9 @@ import type {
   EducationUpdate,
   ErrorDetail,
   Experience,
-  ExperienceBullet,
-  ExperienceBulletCreate,
-  ExperienceBulletUpdate,
+  Bullet,
+  BulletCreate,
+  BulletUpdate,
   ExperienceCreate,
   ExperienceUpdate,
   ExtractionResponse,
@@ -163,36 +163,36 @@ export const projects = collection<Project, ProjectCreate, ProjectUpdate>(
 );
 export const links = collection<Link, LinkCreate, LinkUpdate>("/profile/links");
 
-/** Bullets have no list route — they arrive nested on their experience. */
-export const bullets = {
-  create: (experienceId: string, body: ExperienceBulletCreate) =>
-    request<ExperienceBullet>(
-      `/profile/experiences/${experienceId}/bullets`,
-      "POST",
-      body,
-    ),
-  update: (
-    experienceId: string,
-    bulletId: string,
-    body: ExperienceBulletUpdate,
-  ) =>
-    request<ExperienceBullet>(
-      `/profile/experiences/${experienceId}/bullets/${bulletId}`,
-      "PATCH",
-      body,
-    ),
-  remove: (experienceId: string, bulletId: string) =>
-    request<void>(
-      `/profile/experiences/${experienceId}/bullets/${bulletId}`,
-      "DELETE",
-    ),
-  reorder: (experienceId: string, ids: string[]) =>
-    request<ExperienceBullet[]>(
-      `/profile/experiences/${experienceId}/bullets/order`,
-      "PUT",
-      { ids },
-    ),
-};
+/**
+ * Bullets have no list route — they arrive nested on their parent.
+ *
+ * A factory rather than two hand-written literals, because every path is
+ * `${parent}/${parentId}/bullets…` and the parent path is the only thing that varies.
+ * The shape is deliberately *not* `Collection`: every call carries a parent id, which is
+ * exactly why `ProfileSection` cannot drive these and `BulletEditor` exists.
+ */
+export interface NestedBullets {
+  create(parentId: string, body: BulletCreate): Promise<Bullet>;
+  update(parentId: string, bulletId: string, body: BulletUpdate): Promise<Bullet>;
+  remove(parentId: string, bulletId: string): Promise<void>;
+  reorder(parentId: string, ids: string[]): Promise<Bullet[]>;
+}
+
+function nestedBullets(parentPath: string): NestedBullets {
+  const at = (parentId: string) => `${parentPath}/${parentId}/bullets`;
+  return {
+    create: (parentId, body) => request<Bullet>(at(parentId), "POST", body),
+    update: (parentId, bulletId, body) =>
+      request<Bullet>(`${at(parentId)}/${bulletId}`, "PATCH", body),
+    remove: (parentId, bulletId) =>
+      request<void>(`${at(parentId)}/${bulletId}`, "DELETE"),
+    reorder: (parentId, ids) =>
+      request<Bullet[]>(`${at(parentId)}/order`, "PUT", { ids }),
+  };
+}
+
+export const experienceBullets = nestedBullets("/profile/experiences");
+export const projectBullets = nestedBullets("/profile/projects");
 
 // --- jobs, resumes, applications --------------------------------------------
 

@@ -21,10 +21,6 @@ from services.guardrails.references import PROPER_PHRASE, ProfileIndex
 # that genuine rephrasing survives, high enough that a new claim does not.
 MIN_BULLET_OVERLAP = 0.35
 
-# Projects are measured the other way round — see `grounding_ratio`. This is the share of
-# the *rewrite* that must be supported by the source description.
-MIN_PROJECT_GROUNDING = 0.6
-
 # Words carrying no evidence of shared content, excluded before measuring overlap so
 # two sentences aren't judged similar for both containing "the".
 STOPWORDS = frozenset(
@@ -91,7 +87,6 @@ def run_all(
     for check in (
         check_references,
         check_bullet_traceability,
-        check_project_traceability,
         check_skills,
         check_dates,
     ):
@@ -166,6 +161,23 @@ def check_references(resume: TailoredResume, index: ProfileIndex) -> list[Violat
             )
         seen_projects.add(project.source)
 
+        for bullet in project.bullets:
+            if index.project_bullet(bullet.source) is None:
+                violations.append(
+                    Violation(
+                        "references",
+                        f"project bullet {bullet.source!r} is not in the profile",
+                    )
+                )
+            elif not bullet.source.startswith(project.source + "B"):
+                violations.append(
+                    Violation(
+                        "references",
+                        f"project bullet {bullet.source!r} belongs to a different "
+                        f"project than {project.source!r}",
+                    )
+                )
+
     return violations
 
 
@@ -176,77 +188,38 @@ def check_bullet_traceability(
 
     Rephrasing is the whole point of tailoring, so this cannot demand equality. It
     demands evidence: enough shared meaningful words that the claim is the same claim.
+
+    Project bullets are measured the same way and by the same threshold. They briefly
+    were not: while a project was one long `description`, a one-line resume entry could
+    retain at most a fifth of a sixty-word paragraph, so this measure was unpassable and
+    a separate containment check existed for them. Storing project bullets as rows
+    removed that mismatch — they are the same length as experience bullets now — and the
+    special case went with it.
     """
+    pairs = [
+        (bullet, index.bullet(bullet.source))
+        for experience in resume.experiences
+        for bullet in experience.bullets
+    ] + [
+        (bullet, index.project_bullet(bullet.source))
+        for project in resume.projects
+        for bullet in project.bullets
+    ]
+
     violations = []
-    for experience in resume.experiences:
-        for bullet in experience.bullets:
-            source = index.bullet(bullet.source)
-            if source is None:
-                continue  # already reported by check_references
-
-            ratio = overlap_ratio(bullet.text, source)
-            if ratio < MIN_BULLET_OVERLAP:
-                violations.append(
-                    Violation(
-                        "traceability",
-                        f"bullet {bullet.source!r} keeps only {ratio:.0%} of its source "
-                        f"wording (minimum {MIN_BULLET_OVERLAP:.0%}). Rewrite the "
-                        f"original rather than writing a new claim. "
-                        f"Original: {source!r}",
-                    )
-                )
-    return violations
-
-
-def check_project_traceability(
-    resume: TailoredResume, index: ProfileIndex
-) -> list[Violation]:
-    """Everything the résumé claims about a project must come from the profile's own
-    description of it.
-
-    Measured with `grounding_ratio`, not `overlap_ratio` — a project description is a
-    paragraph and the résumé entry is a line, so demanding that the line retain a third
-    of the paragraph is unpassable by construction and contradicts the one-page budget
-    the model is asked to work to.
-
-    Plus one rule bullets don't need. A project row may legitimately have no description
-    — the name and dates are the whole record — and there is then nothing to rewrite
-    *from*. Text produced in that case is not a rephrasing of anything, it is invention,
-    so it has to be empty. The project still appears; it just appears as the bare facts
-    the profile actually holds.
-    """
-    violations = []
-    for project in resume.projects:
-        source = index.project(project.source)
+    for bullet, source in pairs:
         if source is None:
             continue  # already reported by check_references
 
-        rewrite = project.text.strip()
-        original = (source.description or "").strip()
-
-        if not original:
-            if rewrite:
-                violations.append(
-                    Violation(
-                        "traceability",
-                        f"project {project.source!r} has no description recorded in the "
-                        f"profile, so there is nothing to rewrite. Leave its text empty.",
-                    )
-                )
-            continue
-
-        if not rewrite:
-            continue  # dropping the description loses nothing that wasn't the user's
-
-        ratio = grounding_ratio(rewrite, original)
-        if ratio < MIN_PROJECT_GROUNDING:
+        ratio = overlap_ratio(bullet.text, source)
+        if ratio < MIN_BULLET_OVERLAP:
             violations.append(
                 Violation(
                     "traceability",
-                    f"only {ratio:.0%} of what project {project.source!r} claims appears "
-                    f"in its recorded description (minimum "
-                    f"{MIN_PROJECT_GROUNDING:.0%}). Shorten the original rather than "
-                    f"writing new claims. Original: {original!r}",
+                    f"bullet {bullet.source!r} keeps only {ratio:.0%} of its source "
+                    f"wording (minimum {MIN_BULLET_OVERLAP:.0%}). Rewrite the "
+                    f"original rather than writing a new claim. "
+                    f"Original: {source!r}",
                 )
             )
     return violations
@@ -380,27 +353,6 @@ def overlap_ratio(rewrite: str, source: str) -> float:
     return len(original & _content_words(rewrite)) / len(original)
 
 
-def grounding_ratio(rewrite: str, source: str) -> float:
-    """How much of the **rewrite** is supported by the source.
-
-    The mirror image of `overlap_ratio`, and the difference is not stylistic — the two
-    measures answer different questions, and which one is answerable depends on the
-    shape of the source.
-
-    A bullet and its rewrite are about the same length, so "did the original claim
-    survive?" is a fair question and retention is the right measure. A project
-    description is a paragraph and the résumé needs one line: a 12-word entry drawn from
-    a 68-word description can retain at most 18% of it however faithful it is, so the
-    retention question has no passing answer and asking it rejects every correct
-    rewrite. What can be asked is the containment question — is everything you wrote
-    supported by what I wrote? — which summarising satisfies and invention does not.
-    """
-    claimed = _content_words(rewrite)
-    if not claimed:
-        return 1.0  # nothing asserted, nothing to support
-    return len(claimed & _content_words(source)) / len(claimed)
-
-
 def _content_words(text: str) -> set[str]:
     return {word for word in _WORD.findall(text.lower()) if word not in STOPWORDS}
 
@@ -418,9 +370,9 @@ def _free_text(resume: TailoredResume) -> list[tuple[str, str]]:
         for bullet in experience.bullets
     ]
     texts += [
-        (f"project {project.source}", project.text)
+        (f"project bullet {bullet.source}", bullet.text)
         for project in resume.projects
-        if project.text
+        for bullet in project.bullets
     ]
     return texts
 
@@ -445,14 +397,14 @@ def _dated_text(
             for bullet in experience.bullets
         ]
 
-    # Project text gets the summary's treatment — every year the profile contains —
+    # Project bullets get the summary's treatment — every year the profile contains —
     # rather than a per-project range. Project rows very often carry no dates at all, and
-    # a range built from two NULLs would reject every year the description mentions,
-    # including the correct one. Same known limit as the summary: a shifted date that
-    # happens to land on another real profile year is not caught.
+    # a range built from two NULLs would reject every year a bullet mentions, including
+    # the correct one. Same known limit as the summary: a shifted date that happens to
+    # land on another real profile year is not caught.
     items += [
-        (f"project {project.source}", project.text, everywhere)
+        (f"project bullet {bullet.source}", bullet.text, everywhere)
         for project in resume.projects
-        if project.text
+        for bullet in project.bullets
     ]
     return items

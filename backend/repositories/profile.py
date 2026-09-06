@@ -8,6 +8,7 @@ from models.profile import (
     ExperienceBullet,
     Link,
     Project,
+    ProjectBullet,
     Skill,
     User,
 )
@@ -61,6 +62,28 @@ class ProjectRepository(_OwnedRepository[Project]):
 
 class LinkRepository(_OwnedRepository[Link]):
     model = Link
+
+
+class ProjectBulletRepository(BaseRepository[ProjectBullet]):
+    """Bullets hang off a project rather than a user, so ordering is per-project."""
+
+    model = ProjectBullet
+
+    def list_for_project(self, project_id: uuid.UUID) -> list[ProjectBullet]:
+        stmt = (
+            select(ProjectBullet)
+            .where(ProjectBullet.project_id == project_id)
+            .order_by(ProjectBullet.position)
+        )
+        return list(self.session.scalars(stmt))
+
+    def reorder(self, project_id: uuid.UUID, ids: list[uuid.UUID]) -> list[ProjectBullet]:
+        bullets = {b.id: b for b in self.list_for_project(project_id)}
+        for index, bullet_id in enumerate(ids):
+            if bullet := bullets.get(bullet_id):
+                bullet.position = index
+        self.session.flush()
+        return self.list_for_project(project_id)
 
 
 class ExperienceBulletRepository(BaseRepository[ExperienceBullet]):

@@ -34,16 +34,15 @@ class TailoredExperience(BaseModel):
 
 
 class TailoredProject(BaseModel):
-    """A project selected by label, with its description rewritten for the posting.
+    """A project selected by label, with its own bullets rewritten for the posting.
 
-    `text` defaults to empty because a profile project may have no description at all.
-    There would then be nothing to rewrite *from*, and writing one anyway is exactly the
-    fabrication this schema exists to prevent — so in that case the guardrails require
-    this to stay empty and the project appears as a bare name and date.
+    Note what is *not* here: no name, no URL, no technology list. Those are filled from
+    the project row, which is why a résumé cannot claim a project or a stack the user
+    never recorded.
     """
 
     source: str = Field(description="Label of the project, e.g. P1")
-    text: str = Field(default="", description="The rewritten description")
+    bullets: list[TailoredBullet] = []
 
 
 class TailoredResume(BaseModel):
@@ -91,9 +90,12 @@ class ResumeEducation(BaseModel):
 class ResumeProject(BaseModel):
     name: str
     url: str | None = None
+    # Copied from the profile row verbatim. The model is shown it but has no field in
+    # which to return it, so a stack cannot be paraphrased into tools nobody uses.
+    tech_stack: str | None = None
     start_date: date | None = None
     end_date: date | None = None
-    description: str | None = None
+    bullets: list[str] = []
 
 
 class ResumeLink(BaseModel):

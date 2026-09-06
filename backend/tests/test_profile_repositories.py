@@ -12,6 +12,7 @@ from repositories.profile import (
     ExperienceBulletRepository,
     ExperienceRepository,
     LinkRepository,
+    ProjectBulletRepository,
     ProjectRepository,
     SkillRepository,
     UserRepository,
@@ -155,6 +156,44 @@ def test_bullets_come_back_in_position_order(session: Session, user: User) -> No
 
     session.refresh(experience)
     assert [b.text for b in experience.bullets] == ["first", "second", "third"]
+
+
+def test_project_bullets_come_back_in_position_order(
+    session: Session, user: User
+) -> None:
+    """Same ordering guarantee as experience bullets, proved separately.
+
+    `ProjectBulletRepository` cannot inherit the user-scoped base — a bullet has no
+    `user_id` — so it is a second hand-written implementation, and a second
+    implementation deserves its own proof rather than an assumption.
+    """
+    projects = ProjectRepository(session)
+    bullets = ProjectBulletRepository(session)
+
+    project = projects.create(user_id=user.id, name="ToDoFlow")
+    # Deliberately inserted out of order.
+    bullets.create(project_id=project.id, text="third", position=2)
+    bullets.create(project_id=project.id, text="first", position=0)
+    bullets.create(project_id=project.id, text="second", position=1)
+
+    listed = bullets.list_for_project(project.id)
+    assert [b.text for b in listed] == ["first", "second", "third"]
+
+    session.refresh(project)
+    assert [b.text for b in project.bullets] == ["first", "second", "third"]
+
+
+def test_deleting_a_project_takes_its_bullets(session: Session, user: User) -> None:
+    """The cascade, so a deleted project cannot strand rows the guardrails would still
+    resolve labels against."""
+    projects = ProjectRepository(session)
+    bullets = ProjectBulletRepository(session)
+
+    project = projects.create(user_id=user.id, name="ToDoFlow")
+    bullets.create(project_id=project.id, text="only", position=0)
+
+    projects.delete(project)
+    assert bullets.list_for_project(project.id) == []
 
 
 def test_bullet_round_trip_and_reorder(session: Session, user: User) -> None:

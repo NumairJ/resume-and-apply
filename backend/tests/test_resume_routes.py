@@ -21,6 +21,7 @@ from repositories.application import (
 from repositories.profile import (
     ExperienceBulletRepository,
     ExperienceRepository,
+    ProjectBulletRepository,
     ProjectRepository,
     SkillRepository,
 )
@@ -92,17 +93,31 @@ def seeded(session: Session, user: User) -> dict:
     skills.create(user_id=user.id, name="Postgres", category="Databases", position=1)
 
     projects = ProjectRepository(session)
-    projects.create(
+    portfolio = projects.create(
         user_id=user.id,
         name="Portfolio Site",
-        description=(
-            "Personal site built with Next.js and a typed API layer, "
-            "deployed on a single container"
-        ),
+        tech_stack="Next.js, Postgres, Docker",
         url="https://dana.example/portfolio",
         start_date=date(2022, 4, 1),
         end_date=date(2022, 9, 1),
         position=0,
+    )
+    project_bullets = ProjectBulletRepository(session)
+    project_bullets.create(
+        project_id=portfolio.id,
+        position=0,
+        text=(
+            "Personal site built with Next.js and a typed API layer, "
+            "deployed on a single container"
+        ),
+    )
+    project_bullets.create(
+        project_id=portfolio.id,
+        position=1,
+        text=(
+            "Built a RESTful API for the writing archive and wired it to a "
+            "Postgres store with cached reads"
+        ),
     )
     projects.create(user_id=user.id, name="Crossword Solver", position=1)
 
@@ -174,8 +189,10 @@ def test_generate_returns_projects_resolved_from_the_database(
     assert project["name"] == "Portfolio Site"
     assert project["url"] == "https://dana.example/portfolio"
     assert project["start_date"] == "2022-04-01"
-    # Only the description is the model's.
-    assert project["description"].endswith("deployed as a single container")
+    # Verbatim from the row — the model has no field in which to return a stack.
+    assert project["tech_stack"] == "Next.js, Postgres, Docker"
+    # Only the bullet text is the model's.
+    assert project["bullets"][0].endswith("deployed as a single container")
 
 
 def test_generate_sends_the_posting_into_the_prompt(
@@ -188,6 +205,7 @@ def test_generate_sends_the_posting_into_the_prompt(
     assert "Globex" in provider.prompts[0]
     assert "[E1B1]" in provider.prompts[0]
     assert "[P1]" in provider.prompts[0]
+    assert "[P1B1]" in provider.prompts[0]
 
 
 def test_guardrail_failure_is_422_naming_the_violations(

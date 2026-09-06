@@ -16,7 +16,7 @@ from schemas.resume import (
     TailoredResume,
 )
 from services import guardrails
-from services.guardrails import MIN_PROJECT_GROUNDING, grounding_ratio, overlap_ratio
+from services.guardrails import overlap_ratio
 from services.guardrails.references import PROPER_PHRASE
 from tests.factories import valid_resume
 
@@ -170,14 +170,14 @@ def test_invented_project_is_rejected(profile: Profile) -> None:
     """The model cannot write a project name, so citing one that isn't there is how an
     invented project would have to appear."""
     resume = valid_resume()
-    resume.projects.append(TailoredProject(source="P9", text="A thing I never built"))
+    resume.projects.append(TailoredProject(source="P9"))
     violations = guardrails.run_all(resume, profile)
     assert any(v.check == "references" and "P9" in v.message for v in violations)
 
 
 def test_duplicated_project_is_rejected(profile: Profile) -> None:
     resume = valid_resume()
-    resume.projects.append(TailoredProject(source="P1", text=""))
+    resume.projects.append(TailoredProject(source="P1"))
     violations = guardrails.run_all(resume, profile)
     assert any(
         v.check == "references" and "P1" in v.message and "more than once" in v.message
@@ -185,99 +185,90 @@ def test_duplicated_project_is_rejected(profile: Profile) -> None:
     )
 
 
-def test_untraceable_project_rewrite_is_rejected(profile: Profile) -> None:
-    """Everything the line claims has to come from the recorded description."""
+def test_invented_project_bullet_is_rejected(profile: Profile) -> None:
     resume = valid_resume()
-    resume.projects[0].text = "Led a distributed team building trading infrastructure"
+    resume.projects[0].bullets.append(
+        TailoredBullet(source="P1B9", text="Something that was never recorded")
+    )
     violations = guardrails.run_all(resume, profile)
-    assert any(v.check == "traceability" and "P1" in v.message for v in violations)
+    assert any(v.check == "references" and "P1B9" in v.message for v in violations)
 
 
-def test_a_project_line_may_say_much_less_than_the_description(
-    profile: Profile,
-) -> None:
-    """Projects are measured by grounding, not retention, and this is why.
+def test_a_bullet_from_another_project_is_rejected(profile: Profile) -> None:
+    """A real project bullet, but hung under the wrong project.
 
-    A profile's project description is a paragraph of notes; the résumé needs one line.
-    Under the retention measure bullets use, a 12-word line drawn from a 60-word
-    description can score at most ~20% however faithful it is — so the check had no
-    passing answer and rejected every correct rewrite, while the prompt was
-    simultaneously demanding a one-page résumé.
+    Cited under P2, `P1B1` resolves perfectly well — which is exactly why resolution
+    alone is not enough. The claim would appear under a project that never made it.
     """
-    source = profile.projects[0].description
-    concise = "Personal site with a typed API layer"
-
-    assert overlap_ratio(concise, source) < 0.35  # would have been rejected
-    assert grounding_ratio(concise, source) == 1.0  # every word is supported
-
-    resume = valid_resume()
-    resume.projects[0].text = concise
-    assert guardrails.run_all(resume, profile) == []
-
-
-def test_grounding_measures_the_rewrite_not_the_source() -> None:
-    source = "Built a task manager in Python with a Postgres store"
-
-    # Says less than the source: fully supported.
-    assert grounding_ratio("Built a task manager in Python", source) == 1.0
-    # Says more than the source: the added claims are unsupported.
-    assert grounding_ratio(
-        "Shipped a trading platform for Boeing in Rust across three regions", source
-    ) < MIN_PROJECT_GROUNDING
-    # Nothing asserted, nothing to support — the empty case is not a violation.
-    assert grounding_ratio("", source) == 1.0
-
-
-def test_description_written_for_a_project_that_has_none_is_rejected(
-    profile: Profile,
-) -> None:
-    """P2 in the fixture profile is a bare name. Text for it is not a rephrasing of
-    anything — there is no source — so it is invention by definition."""
     resume = valid_resume()
     resume.projects.append(
-        TailoredProject(source="P2", text="A fast solver written in Rust")
+        TailoredProject(
+            source="P2",
+            bullets=[
+                TailoredBullet(
+                    source="P1B1",
+                    text=(
+                        "Personal site built with Next.js and a typed API layer, "
+                        "deployed as a single container"
+                    ),
+                )
+            ],
+        )
     )
     violations = guardrails.run_all(resume, profile)
     assert any(
-        v.check == "traceability" and "P2" in v.message and "nothing to rewrite" in v.message
-        for v in violations
+        v.check == "references" and "different project" in v.message for v in violations
     )
 
 
-def test_a_project_with_no_description_may_still_be_selected(profile: Profile) -> None:
-    """The name and dates are real profile facts. Requiring a description would drop a
-    legitimate entry for having been recorded tersely."""
+def test_untraceable_project_bullet_is_rejected(profile: Profile) -> None:
+    """Project bullets are held to the same overlap floor as experience bullets.
+
+    They briefly were not. While a project was one long `description`, a one-line resume
+    entry could retain at most a fifth of a sixty-word paragraph, so a separate
+    containment measure existed for projects. Storing bullets as rows removed the
+    mismatch — these are the same length as experience bullets — and the special case
+    went with it.
+    """
     resume = valid_resume()
-    resume.projects.append(TailoredProject(source="P2", text=""))
+    resume.projects[0].bullets[0].text = (
+        "Led a distributed team building trading infrastructure"
+    )
+    violations = guardrails.run_all(resume, profile)
+    assert any(v.check == "traceability" and "P1B1" in v.message for v in violations)
+
+
+def test_a_project_with_no_bullets_may_still_be_selected(profile: Profile) -> None:
+    """P2 in the fixture is a bare name. Its name is a real profile fact, and requiring
+    bullets would drop a legitimate entry for having been recorded tersely."""
+    resume = valid_resume()
+    resume.projects.append(TailoredProject(source="P2"))
     assert guardrails.run_all(resume, profile) == []
 
 
-def test_dropping_a_project_description_entirely_passes(profile: Profile) -> None:
-    """Omission is always allowed. Only writing something new is not."""
+def test_project_bullets_are_covered_by_the_fabrication_check(
+    profile: Profile,
+) -> None:
+    """They are free text, so they get the same net as experience bullets."""
     resume = valid_resume()
-    resume.projects[0].text = ""
-    assert guardrails.run_all(resume, profile) == []
-
-
-def test_project_text_is_covered_by_the_fabrication_check(profile: Profile) -> None:
-    """Project descriptions are free text, so they get the same net as bullets."""
-    resume = valid_resume()
-    resume.projects[0].text = (
+    resume.projects[0].bullets[0].text = (
         "Personal site built with Next.js and a typed API layer, deployed on "
         "Northwind Cloud"
     )
     violations = guardrails.run_all(resume, profile)
-    assert any(v.check == "fabrication" and "Northwind Cloud" in v.message for v in violations)
+    assert any(
+        v.check == "fabrication" and "Northwind Cloud" in v.message for v in violations
+    )
 
 
-def test_project_text_is_covered_by_the_style_check(profile: Profile) -> None:
+def test_project_bullets_are_covered_by_the_style_check(profile: Profile) -> None:
     resume = valid_resume()
-    resume.projects[0].text = (
+    resume.projects[0].bullets[0].text = (
         "Personal site built with Next.js and a typed API layer, a testament to "
         "deployment"
     )
     violations = guardrails.run_all(resume, profile)
-    assert any(v.check == "style" and "P1" in v.message for v in violations)
+    assert any(v.check == "style" and "P1B1" in v.message for v in violations)
 
 
 # --- the profile's own words are not fabrication -----------------------------
@@ -304,12 +295,18 @@ def test_a_proper_noun_from_a_stored_bullet_is_not_fabrication(
     assert guardrails.run_all(resume, profile) == []
 
 
-def test_a_proper_noun_from_a_stored_project_description_is_not_fabrication(
+def test_a_proper_noun_from_a_stored_project_bullet_is_not_fabrication(
     profile: Profile,
 ) -> None:
-    """The exact live failure: the fixture's description says "RESTful API"."""
+    """The exact live failure: the fixture's own bullet says "RESTful API"."""
     resume = valid_resume()
-    resume.projects[0].text = "Built a RESTful API for the writing archive"
+    # Cites P1B2, the fixture bullet that actually contains the phrase.
+    resume.projects[0].bullets = [
+        TailoredBullet(
+            source="P1B2",
+            text="Built a RESTful API for the writing archive, backed by Postgres",
+        )
+    ]
     assert guardrails.run_all(resume, profile) == []
 
 

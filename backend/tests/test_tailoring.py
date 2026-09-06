@@ -55,18 +55,27 @@ def test_prompt_labels_match_what_the_guardrails_resolve(profile) -> None:
     assert "[P3]" not in rendered
 
 
-def test_projects_are_labelled_and_carry_their_description(profile) -> None:
+def test_projects_are_labelled_down_to_their_bullets(profile) -> None:
     """Before v2 projects were listed unlabelled, so the model could read about one and
-    had no way to put it on the resume — prompt cost with no possible output. The
-    description has to be here too: it is the source a rewrite must be traceable to.
+    had no way to put it on the resume — prompt cost with no possible output. The bullet
+    text has to be here too: it is the source a rewrite must be traceable to.
     """
     rendered = tailoring.render_profile(profile)
 
-    assert "[P1] Portfolio Site: Personal site built with Next.js" in rendered
-    # P2 has no description recorded, and inventing a colon and nothing after it would
-    # read to the model as an empty one.
+    assert "[P1] Portfolio Site" in rendered
+    assert "[P1B1] Personal site built with Next.js" in rendered
+    assert "[P1B2] Built a RESTful API" in rendered
     assert "[P2] Crossword Solver" in rendered
-    assert "[P2] Crossword Solver:" not in rendered
+    # P2 has none, and a bare heading would leave the model guessing whether it may
+    # write some.
+    assert "[P2B1]" not in rendered
+
+
+def test_the_tech_stack_is_shown_but_marked_unreturnable(profile) -> None:
+    """It is copied to the resume from the row, so the model needs to read it and has
+    nowhere to put it. Saying so saves an attempt that the schema would reject."""
+    rendered = tailoring.render_profile(profile)
+    assert "Tech (fixed, do not return): Next.js, Postgres, Docker" in rendered
 
 
 def test_prompt_includes_the_posting_and_the_profile(profile, posting) -> None:
@@ -213,7 +222,10 @@ def test_project_facts_come_from_the_profile_and_only_the_text_from_the_model(
     assert project.url == "https://dana.example/portfolio"
     assert project.start_date == date(2022, 4, 1)
     assert project.end_date == date(2022, 9, 1)
-    assert project.description.endswith("deployed as a single container")
+    # Verbatim from the row. The model was shown it and given no field to return it in.
+    assert project.tech_stack == "Next.js, Postgres, Docker"
+    # Only this came from the model.
+    assert project.bullets[0].endswith("deployed as a single container")
 
 
 def test_an_unselected_project_stays_off_the_resume(profile) -> None:
@@ -223,20 +235,21 @@ def test_an_unselected_project_stays_off_the_resume(profile) -> None:
     assert [p.name for p in resume.projects] == ["Portfolio Site"]
 
 
-def test_an_omitted_project_description_is_not_backfilled(profile) -> None:
-    """The model saw the profile's own wording and chose to leave it out. Reinstating it
-    would put untailored text on a tailored resume."""
+def test_a_project_with_no_selected_bullets_still_carries_its_facts(profile) -> None:
+    """The name, URL and stack are profile facts and do not depend on the model choosing
+    any bullets — a bare project is a legitimate resume entry."""
     tailored = valid_resume()
-    tailored.projects[0].text = ""
+    tailored.projects[0].bullets = []
 
     resume = tailoring.assemble(tailored, profile)
     assert resume.projects[0].name == "Portfolio Site"
-    assert resume.projects[0].description is None
+    assert resume.projects[0].tech_stack == "Next.js, Postgres, Docker"
+    assert resume.projects[0].bullets == []
 
 
 def test_assembly_ignores_an_unresolvable_project_reference(profile) -> None:
     tailored = valid_resume()
-    tailored.projects.append(TailoredProject(source="P9", text=""))
+    tailored.projects.append(TailoredProject(source="P9"))
 
     resume = tailoring.assemble(tailored, profile)
     assert len(resume.projects) == 1
@@ -275,7 +288,7 @@ def test_the_experience_and_project_caps_hold_too(profile) -> None:
     guardrails would have rejected them."""
     tailored = valid_resume()
     tailored.experiences = [TailoredExperience(source="E1", bullets=[])] * 9
-    tailored.projects = [TailoredProject(source="P1", text="")] * 9
+    tailored.projects = [TailoredProject(source="P1")] * 9
 
     resume = tailoring.assemble(tailored, profile)
 

@@ -17,12 +17,13 @@ from sqlalchemy.orm import Session
 
 from core.db import get_db
 from core.deps import get_current_user_id
-from models.profile import Experience, ExperienceBullet
+from models.profile import Experience, ExperienceBullet, Project, ProjectBullet
 from repositories.profile import (
     EducationRepository,
     ExperienceBulletRepository,
     ExperienceRepository,
     LinkRepository,
+    ProjectBulletRepository,
     ProjectRepository,
     SkillRepository,
     UserRepository,
@@ -41,6 +42,9 @@ from schemas.profile import (
     LinkRead,
     LinkUpdate,
     Profile,
+    ProjectBulletCreate,
+    ProjectBulletRead,
+    ProjectBulletUpdate,
     ProjectCreate,
     ProjectRead,
     ProjectUpdate,
@@ -105,6 +109,27 @@ def _get_bullet(
     repo = ExperienceBulletRepository(session)
     bullet = repo.get(bullet_id)
     if bullet is None or bullet.experience_id != experience_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    return bullet
+
+
+def _get_project(
+    session: Session, project_id: uuid.UUID, user_id: uuid.UUID
+) -> Project:
+    return _get_owned(ProjectRepository(session), project_id, user_id)
+
+
+def _get_project_bullet(
+    session: Session,
+    project_id: uuid.UUID,
+    bullet_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> ProjectBullet:
+    """Resolve a bullet through its project, so ownership is checked on the way."""
+    _get_project(session, project_id, user_id)
+    repo = ProjectBulletRepository(session)
+    bullet = repo.get(bullet_id)
+    if bullet is None or bullet.project_id != project_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
     return bullet
 
@@ -220,7 +245,11 @@ def create_experience(
 ) -> Any:
     """Create an experience and, optionally, its bullets in one transaction."""
     data = payload.model_dump()
-    bullets = data.pop("bullets")
+    # `exclude_unset` on the *bullets* specifically. A plain dump materialises the
+    # schema's `position = 0` default for every one of them, so the setdefault below
+    # would never fire and a whole nested list would land at position 0.
+    bullets = [bullet.model_dump(exclude_unset=True) for bullet in payload.bullets]
+    data.pop("bullets")
     experience = ExperienceRepository(session).create(user_id=user_id, **data)
 
     bullet_repo = ExperienceBulletRepository(session)
@@ -420,9 +449,25 @@ def create_project(
     session: Session = Depends(get_db),
     user_id: uuid.UUID = Depends(get_current_user_id),
 ) -> Any:
-    item = ProjectRepository(session).create(user_id=user_id, **payload.model_dump())
+    """Create a project and, optionally, its bullets in one transaction."""
+    data = payload.model_dump()
+    # `exclude_unset` on the *bullets* specifically. A plain dump materialises the
+    # schema's `position = 0` default for every one of them, so the setdefault below
+    # would never fire and a whole nested list would land at position 0.
+    bullets = [bullet.model_dump(exclude_unset=True) for bullet in payload.bullets]
+    data.pop("bullets")
+    project = ProjectRepository(session).create(user_id=user_id, **data)
+
+    bullet_repo = ProjectBulletRepository(session)
+    for index, bullet in enumerate(bullets):
+        # Fall back to request order when the caller didn't set positions itself.
+        bullet.setdefault("position", index)
+        bullet_repo.create(project_id=project.id, **bullet)
+
     session.commit()
-    return item
+    # Refreshed so the `bullets` relationship is populated for ProjectRead.
+    session.refresh(project)
+    return project
 
 
 @router.put("/projects/order", response_model=list[ProjectRead])
@@ -459,6 +504,78 @@ def delete_project(
 ) -> None:
     repo = ProjectRepository(session)
     repo.delete(_get_owned(repo, item_id, user_id))
+    session.commit()
+
+
+# --- project bullets --------------------------------------------------------
+
+
+@router.post(
+    "/projects/{project_id}/bullets",
+    response_model=ProjectBulletRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_project_bullet(
+    project_id: uuid.UUID,
+    payload: ProjectBulletCreate,
+    session: Session = Depends(get_db),
+    user_id: uuid.UUID = Depends(get_current_user_id),
+) -> Any:
+    _get_project(session, project_id, user_id)
+    bullet = ProjectBulletRepository(session).create(
+        project_id=project_id, **payload.model_dump()
+    )
+    session.commit()
+    return bullet
+
+
+@router.put(
+    "/projects/{project_id}/bullets/order",
+    response_model=list[ProjectBulletRead],
+)
+def reorder_project_bullets(
+    project_id: uuid.UUID,
+    payload: ReorderRequest,
+    session: Session = Depends(get_db),
+    user_id: uuid.UUID = Depends(get_current_user_id),
+) -> Any:
+    _get_project(session, project_id, user_id)
+    bullets = ProjectBulletRepository(session).reorder(project_id, payload.ids)
+    session.commit()
+    return bullets
+
+
+@router.patch(
+    "/projects/{project_id}/bullets/{bullet_id}",
+    response_model=ProjectBulletRead,
+)
+def update_project_bullet(
+    project_id: uuid.UUID,
+    bullet_id: uuid.UUID,
+    payload: ProjectBulletUpdate,
+    session: Session = Depends(get_db),
+    user_id: uuid.UUID = Depends(get_current_user_id),
+) -> Any:
+    bullet = _get_project_bullet(session, project_id, bullet_id, user_id)
+    ProjectBulletRepository(session).update(
+        bullet, **payload.model_dump(exclude_unset=True)
+    )
+    session.commit()
+    return bullet
+
+
+@router.delete(
+    "/projects/{project_id}/bullets/{bullet_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_project_bullet(
+    project_id: uuid.UUID,
+    bullet_id: uuid.UUID,
+    session: Session = Depends(get_db),
+    user_id: uuid.UUID = Depends(get_current_user_id),
+) -> None:
+    bullet = _get_project_bullet(session, project_id, bullet_id, user_id)
+    ProjectBulletRepository(session).delete(bullet)
     session.commit()
 
 

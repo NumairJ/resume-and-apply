@@ -170,12 +170,33 @@ class SkillRead(ORMModel, SkillBase):
     id: uuid.UUID
 
 
+# --- Project bullets --------------------------------------------------------
+
+
+class ProjectBulletBase(BaseModel):
+    text: str
+    position: int = 0
+
+
+class ProjectBulletCreate(ProjectBulletBase):
+    pass
+
+
+class ProjectBulletUpdate(BaseModel):
+    text: str | None = None
+    position: int | None = None
+
+
+class ProjectBulletRead(ORMModel, ProjectBulletBase):
+    id: uuid.UUID
+
+
 # --- Project ----------------------------------------------------------------
 
 
 class ProjectBase(ChronologyCheck, BaseModel):
     name: str
-    description: str | None = None
+    tech_stack: str | None = None
     url: str | None = None
     start_date: date | None = None
     end_date: date | None = None
@@ -183,12 +204,12 @@ class ProjectBase(ChronologyCheck, BaseModel):
 
 
 class ProjectCreate(ProjectBase):
-    pass
+    bullets: list[ProjectBulletCreate] = []
 
 
 class ProjectUpdate(BaseModel):
     name: str | None = None
-    description: str | None = None
+    tech_stack: str | None = None
     url: str | None = None
     start_date: date | None = None
     end_date: date | None = None
@@ -197,6 +218,7 @@ class ProjectUpdate(BaseModel):
 
 class ProjectRead(ORMModel, ProjectBase):
     id: uuid.UUID
+    bullets: list[ProjectBulletRead] = []
 
 
 # --- Link -------------------------------------------------------------------

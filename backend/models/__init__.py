@@ -14,6 +14,7 @@ from models.profile import (
     ExperienceBullet,
     Link,
     Project,
+    ProjectBullet,
     Skill,
     User,
 )
@@ -29,6 +30,7 @@ __all__ = [
     "JobPosting",
     "Link",
     "Project",
+    "ProjectBullet",
     "Resume",
     "Skill",
     "User",

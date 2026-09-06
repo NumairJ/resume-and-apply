@@ -41,7 +41,21 @@ export const profile: Profile = {
     { id: "s-1", name: "Python", category: "Languages", position: 0 },
     { id: "s-2", name: "Postgres", category: "Databases", position: 1 },
   ],
-  projects: [],
+  projects: [
+    {
+      id: "proj-1",
+      name: "Portfolio Site",
+      tech_stack: "Next.js, Postgres",
+      url: "https://example.com/portfolio",
+      start_date: null,
+      end_date: null,
+      position: 0,
+      bullets: [
+        { id: "pb-1", text: "Built a typed API layer", position: 0 },
+        { id: "pb-2", text: "Deployed as a single container", position: 1 },
+      ],
+    },
+  ],
   links: [],
 };
 
@@ -132,5 +146,27 @@ export const handlers = [
   http.put("/api/profile/experiences/:id/bullets/order", async ({ request }) => {
     await record(request);
     return HttpResponse.json(profile.experiences[0].bullets);
+  }),
+
+  // Projects have their own nested bullet routes now. `onUnhandledRequest: "error"`
+  // means every one a test can reach has to be mocked, not just the ones asserted on.
+  http.post("/api/profile/projects/:id/bullets", async ({ request }) => {
+    await record(request);
+    return HttpResponse.json(
+      { id: "pb-new", text: "new", position: 2 },
+      { status: 201 },
+    );
+  }),
+  http.patch("/api/profile/projects/:id/bullets/:bulletId", async ({ request }) => {
+    await record(request);
+    return HttpResponse.json(profile.projects[0].bullets[0]);
+  }),
+  http.delete("/api/profile/projects/:id/bullets/:bulletId", async ({ request }) => {
+    await record(request);
+    return new HttpResponse(null, { status: 204 });
+  }),
+  http.put("/api/profile/projects/:id/bullets/order", async ({ request }) => {
+    await record(request);
+    return HttpResponse.json(profile.projects[0].bullets);
   }),
 ];

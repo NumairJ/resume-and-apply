@@ -130,13 +130,42 @@ class Project(UUIDPrimaryKey, Timestamps, Base):
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
     name: Mapped[str] = mapped_column(String(200))
-    description: Mapped[str | None] = mapped_column(Text)
+    # The technologies, as the user wrote them: "React, Node.js, Express, MongoDB".
+    # Copied onto the resume verbatim and never shown to the model as something it may
+    # return, so a stack cannot be paraphrased into tools the user does not use. It is a
+    # fact, like a company name — which is exactly why it is a column and not prose.
+    tech_stack: Mapped[str | None] = mapped_column(String(300))
     url: Mapped[str | None] = mapped_column(String(500))
     start_date: Mapped[date | None] = mapped_column(Date)
     end_date: Mapped[date | None] = mapped_column(Date)
     position: Mapped[int] = mapped_column(default=0)
 
     user: Mapped[User] = relationship(back_populates="projects")
+    bullets: Mapped[list["ProjectBullet"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+        order_by="ProjectBullet.position",
+    )
+
+
+class ProjectBullet(UUIDPrimaryKey, Timestamps, Base):
+    """One accomplishment line under a project, for the same reason experiences have one.
+
+    This replaced a single `description` text column. Real profiles were already being
+    written as bullets *inside* that column — line breaks and literal bullet glyphs — and
+    a paragraph is the wrong shape for both ends of the pipeline: the model cannot select
+    part of it, and the guardrails cannot trace a one-line rewrite back to sixty words.
+    """
+
+    __tablename__ = "project_bullets"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    text: Mapped[str] = mapped_column(Text)
+    position: Mapped[int] = mapped_column(default=0)
+
+    project: Mapped[Project] = relationship(back_populates="bullets")
 
 
 class Link(UUIDPrimaryKey, Timestamps, Base):

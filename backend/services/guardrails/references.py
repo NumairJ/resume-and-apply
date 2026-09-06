@@ -8,6 +8,7 @@ like fabrication.
     E1      the first experience
     E1B2    the second bullet of the first experience
     P1      the first project
+    P1B2    the second bullet of the first project
 
 Labels are 1-based because they appear in a prompt, and a model reading "E0" as the
 first item is an avoidable stumble.
@@ -46,6 +47,10 @@ def project_label(index: int) -> str:
     return f"P{index + 1}"
 
 
+def project_bullet_label(project_index: int, bullet_index: int) -> str:
+    return f"{project_label(project_index)}B{bullet_index + 1}"
+
+
 @dataclass
 class ProfileIndex:
     """Everything the checks need to answer "is this in the profile?" quickly."""
@@ -54,6 +59,7 @@ class ProfileIndex:
     _experiences: dict[str, ExperienceRead] = field(default_factory=dict)
     _bullets: dict[str, str] = field(default_factory=dict)
     _projects: dict[str, ProjectRead] = field(default_factory=dict)
+    _project_bullets: dict[str, str] = field(default_factory=dict)
     skills: set[str] = field(default_factory=set)
     years: set[int] = field(default_factory=set)
     vocabulary: set[str] = field(default_factory=set)
@@ -66,6 +72,10 @@ class ProfileIndex:
 
         for position, project in enumerate(self.profile.projects):
             self._projects[project_label(position)] = project
+            for bullet_position, bullet in enumerate(project.bullets):
+                self._project_bullets[
+                    project_bullet_label(position, bullet_position)
+                ] = bullet.text
 
         self.skills = {_normalize(skill.name) for skill in self.profile.skills}
 
@@ -97,7 +107,7 @@ class ProfileIndex:
         # Names alone were not enough, and the gap was not theoretical: a live run was
         # rejected three times for "naming" RESTful API, Team Builder and Convolutional
         # Neural Network — every one of them typed by the user into their own bullets and
-        # project descriptions. The check was calling the profile's own words invented.
+        # project bullets. The check was calling the profile's own words invented.
         #
         # Phrases, never loose words. Adding the individual tokens would let a model
         # recombine "Northwind" from one bullet and "Systems" from another into an
@@ -115,7 +125,10 @@ class ProfileIndex:
         return [
             self.profile.summary or "",
             *self._bullets.values(),
-            *(project.description or "" for project in self.profile.projects),
+            *self._project_bullets.values(),
+            # The stack is user-authored too, and the model is shown it — so a summary
+            # that mentions "Node.js, Express" must not read as fabrication.
+            *(project.tech_stack or "" for project in self.profile.projects),
         ]
 
     def experience(self, label: str) -> ExperienceRead | None:
@@ -127,6 +140,9 @@ class ProfileIndex:
 
     def project(self, label: str) -> ProjectRead | None:
         return self._projects.get(label)
+
+    def project_bullet(self, label: str) -> str | None:
+        return self._project_bullets.get(label)
 
     def years_for(self, experience: ExperienceRead) -> set[int]:
         """Every year one experience spans, so its bullets can be date-checked in context.

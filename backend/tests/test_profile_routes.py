@@ -253,6 +253,93 @@ def test_bullets_on_another_users_experience_are_404(
     assert response.status_code == 404
 
 
+# --- projects and their bullets ---------------------------------------------
+#
+# Projects gained bullets after experiences did, so the same guarantees are proved
+# again rather than assumed to carry over from a sibling table.
+
+
+def test_create_project_with_nested_bullets(client: TestClient) -> None:
+    response = client.post(
+        "/profile/projects",
+        json={
+            "name": "ToDoFlow",
+            "tech_stack": "React, Express, MongoDB",
+            "url": "https://github.com/example/todoflow",
+            "bullets": [{"text": "first"}, {"text": "second"}],
+        },
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["tech_stack"] == "React, Express, MongoDB"
+    assert [b["text"] for b in body["bullets"]] == ["first", "second"]
+
+
+def test_nested_project_bullets_keep_their_request_order(client: TestClient) -> None:
+    """Regression: a plain `model_dump()` materialised the schema's `position = 0` for
+    every nested bullet, so the fallback that numbers them never fired and a whole list
+    landed at position 0 — leaving the order to whatever the database returned."""
+    body = client.post(
+        "/profile/projects",
+        json={
+            "name": "ToDoFlow",
+            "bullets": [{"text": "one"}, {"text": "two"}, {"text": "three"}],
+        },
+    ).json()
+    assert [b["position"] for b in body["bullets"]] == [0, 1, 2]
+    assert [b["text"] for b in body["bullets"]] == ["one", "two", "three"]
+
+
+def test_project_bullet_crud_and_reorder(client: TestClient) -> None:
+    project = client.post("/profile/projects", json={"name": "ToDoFlow"}).json()
+    base = f"/profile/projects/{project['id']}/bullets"
+
+    first = client.post(base, json={"text": "one", "position": 0})
+    assert first.status_code == 201
+    second = client.post(base, json={"text": "two", "position": 1}).json()
+    first_id = first.json()["id"]
+
+    updated = client.patch(f"{base}/{first_id}", json={"text": "one, rewritten"})
+    assert updated.json()["text"] == "one, rewritten"
+
+    reordered = client.put(base + "/order", json={"ids": [second["id"], first_id]})
+    assert [b["text"] for b in reordered.json()] == ["two", "one, rewritten"]
+
+    assert client.delete(f"{base}/{second['id']}").status_code == 204
+    remaining = client.get("/profile/projects").json()[0]["bullets"]
+    assert [b["text"] for b in remaining] == ["one, rewritten"]
+
+
+def test_project_bullet_of_another_project_is_404(client: TestClient) -> None:
+    """A bullet id alone is not enough — it has to belong to the project in the path."""
+    first = client.post(
+        "/profile/projects",
+        json={"name": "ToDoFlow", "bullets": [{"text": "belongs to ToDoFlow"}]},
+    ).json()
+    second = client.post("/profile/projects", json={"name": "PokeDex"}).json()
+
+    bullet_id = first["bullets"][0]["id"]
+    wrong = f"/profile/projects/{second['id']}/bullets/{bullet_id}"
+    assert client.patch(wrong, json={"text": "hijacked"}).status_code == 404
+    assert client.delete(wrong).status_code == 404
+
+
+def test_project_bullets_on_another_users_project_are_404(
+    client: TestClient, session: Session, other_user: User
+) -> None:
+    """404, never 403 — a 403 would confirm the row exists."""
+    from models.profile import Project
+
+    theirs = Project(user_id=other_user.id, name="Theirs")
+    session.add(theirs)
+    session.flush()
+
+    response = client.post(
+        f"/profile/projects/{theirs.id}/bullets", json={"text": "sneaky"}
+    )
+    assert response.status_code == 404
+
+
 # --- chronology -------------------------------------------------------------
 
 

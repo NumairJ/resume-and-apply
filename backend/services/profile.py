@@ -3,7 +3,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from models.profile import Experience, User
+from models.profile import Experience, Project, User
 from schemas.profile import Profile
 
 
@@ -26,7 +26,7 @@ def get_profile(session: Session, user_id: uuid.UUID) -> Profile | None:
             selectinload(User.education),
             selectinload(User.experiences).selectinload(Experience.bullets),
             selectinload(User.skills),
-            selectinload(User.projects),
+            selectinload(User.projects).selectinload(Project.bullets),
             selectinload(User.links),
         )
     )
